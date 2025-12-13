@@ -8,9 +8,12 @@ services:
     environment:
       - FLASK_ENV=production
       - TZ=UTC
+      - DATABASE_URL=postgresql://tennisxml:tennisxml@postgres:5432/tennisxml
     restart: unless-stopped
     volumes:
       - ./:/app:ro
+    depends_on:
+      - postgres
     # If you have a database file, mount a writable volume for it
     # - ./data:/app/data
 
@@ -24,3 +27,19 @@ services:
   #   volumes:
   #     - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
   #   restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: tennisxml-postgres
+    environment:
+      - POSTGRES_DB=tennisxml
+      - POSTGRES_USER=tennisxml
+      - POSTGRES_PASSWORD=tennisxml
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

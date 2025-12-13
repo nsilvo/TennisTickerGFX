@@ -1,5 +1,7 @@
 import xml.etree.ElementTree as ET
 import sqlite3
+import os
+from urllib.parse import urlparse
 import requests
 import time
 import json
@@ -41,11 +43,22 @@ state_lock = Lock()
 # XMLCacheManager Class
 # ====================================================================
 class XMLCacheManager:
-    """Manages fetching XML data and caching it in an SQLite database."""
+    """Manages fetching XML data and caching it in a database (SQLite or Postgres)."""
     def __init__(self, db_name):
-        # NOTE: check_same_thread=False is essential for SQLite access from threads
-        self.conn = sqlite3.connect(db_name, check_same_thread=False)
+        self.conn = self._connect(db_name)
+        self.param_style = 'sqlite' if isinstance(self.conn, sqlite3.Connection) else 'postgres'
         self.create_tables()
+
+    def _connect(self, db_name):
+        db_url = os.getenv("DATABASE_URL", "")
+        if db_url:
+            try:
+                import psycopg2
+                return psycopg2.connect(db_url)
+            except Exception as e:
+                print(f"Failed to connect to Postgres via DATABASE_URL: {e}. Falling back to SQLite.")
+        # SQLite fallback
+        return sqlite3.connect(db_name, check_same_thread=False)
 
     def create_tables(self):
         """
@@ -121,8 +134,20 @@ class XMLCacheManager:
         self.conn.commit()
 
         # --- Simple migration: ensure new columns exist on older DBs ---
-        cursor.execute("PRAGMA table_info(matches)")
-        existing_cols = [row[1] for row in cursor.fetchall()]
+        existing_cols = []
+        try:
+            cursor.execute("PRAGMA table_info(matches)")
+            existing_cols = [row[1] for row in cursor.fetchall()]
+        except Exception:
+            # Postgres path: introspect via information_schema
+            try:
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name='matches'
+                """)
+                existing_cols = [row[0] for row in cursor.fetchall()]
+            except Exception:
+                existing_cols = []
 
         def ensure_column(name, col_type, default_clause=""):
             if name not in existing_cols:
@@ -149,11 +174,18 @@ class XMLCacheManager:
 
         try:
             # Find completed matches from previous days
-            cursor.execute("""
-                SELECT * FROM matches
-                WHERE winner_name != '' AND winner_name IS NOT NULL
-                  AND timestamp < ?
-            """, (today_midnight,))
+            if self.param_style == 'sqlite':
+                cursor.execute("""
+                    SELECT * FROM matches
+                    WHERE winner_name != '' AND winner_name IS NOT NULL
+                      AND timestamp < ?
+                """, (today_midnight,))
+            else:
+                cursor.execute("""
+                    SELECT * FROM matches
+                    WHERE winner_name != '' AND winner_name IS NOT NULL
+                      AND timestamp < %s
+                """, (today_midnight,))
 
             rows_to_archive = cursor.fetchall()
             if rows_to_archive:
@@ -169,17 +201,27 @@ class XMLCacheManager:
                     values = list(row_dict.values())
 
                     cols_sql = ", ".join(columns)
-                    placeholders = ", ".join(['?'] * len(columns))
-
-                    insert_sql = f"""
-                        INSERT OR IGNORE INTO matches_archive ({cols_sql})
-                        VALUES ({placeholders})
-                    """
+                    if self.param_style == 'sqlite':
+                        placeholders = ", ".join(['?'] * len(columns))
+                        insert_sql = f"""
+                            INSERT OR IGNORE INTO matches_archive ({cols_sql})
+                            VALUES ({placeholders})
+                        """
+                    else:
+                        placeholders = ", ".join(['%s'] * len(columns))
+                        # Postgres doesn't have INSERT OR IGNORE; use ON CONFLICT
+                        insert_sql = f"""
+                            INSERT INTO matches_archive ({cols_sql}) VALUES ({placeholders})
+                            ON CONFLICT (matchid) DO NOTHING
+                        """
                     cursor.execute(insert_sql, tuple(values))
 
                 # Delete from live table
                 match_ids_to_delete = [row[0] for row in rows_to_archive]  # matchid is first column
-                placeholders = ",".join(["?"] * len(match_ids_to_delete))
+                if self.param_style == 'sqlite':
+                    placeholders = ",".join(["?"] * len(match_ids_to_delete))
+                else:
+                    placeholders = ",".join(["%s"] * len(match_ids_to_delete))
                 cursor.execute(f"DELETE FROM matches WHERE matchid IN ({placeholders})", match_ids_to_delete)
 
                 self.conn.commit()
@@ -197,7 +239,10 @@ class XMLCacheManager:
         cutoff_time = int(time.time()) - (7 * 24 * 3600)  # 7 days ago
 
         try:
-            cursor.execute("DELETE FROM matches_archive WHERE archived_at < ?", (cutoff_time,))
+            if self.param_style == 'sqlite':
+                cursor.execute("DELETE FROM matches_archive WHERE archived_at < ?", (cutoff_time,))
+            else:
+                cursor.execute("DELETE FROM matches_archive WHERE archived_at < %s", (cutoff_time,))
             deleted_count = cursor.rowcount
             if deleted_count > 0:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Deleted {deleted_count} archived matches older than 7 days.")
@@ -443,7 +488,10 @@ class XMLCacheManager:
                 candidate_data[f"set{i}_tb"] = tb
 
             # --- 4. CHECK FOR CHANGES ---
-            cursor.execute("SELECT * FROM matches WHERE matchid=?", (match_id,))
+            if self.param_style == 'sqlite':
+                cursor.execute("SELECT * FROM matches WHERE matchid=?", (match_id,))
+            else:
+                cursor.execute("SELECT * FROM matches WHERE matchid=%s", (match_id,))
             row = cursor.fetchone()
 
             should_update = False
@@ -468,12 +516,16 @@ class XMLCacheManager:
                 values = list(candidate_data.values())
 
                 cols_sql = ", ".join(columns)
-                placeholders = ", ".join(['?'] * len(columns))
+                if self.param_style == 'sqlite':
+                    placeholders = ", ".join(['?'] * len(columns))
+                else:
+                    placeholders = ", ".join(['%s'] * len(columns))
                 update_sql = ", ".join([f"{col}=excluded.{col}" for col in columns if col != 'matchid'])
 
+                # Upsert syntax differs; for Postgres use ON CONFLICT, for SQLite it's also supported
                 sql = f"""
                     INSERT INTO matches ({cols_sql}) VALUES ({placeholders})
-                    ON CONFLICT(matchid) DO UPDATE SET {update_sql};
+                    ON CONFLICT (matchid) DO UPDATE SET {update_sql};
                 """
 
                 cursor.execute(sql, tuple(values))
@@ -495,7 +547,10 @@ class XMLCacheManager:
             for (mid,) in existing_plan_rows:
                 if mid not in match_ids_in_xml:
                     print(f"Removing stale planned match {mid} from DB (no longer present in XML).")
-                    cursor.execute("DELETE FROM matches WHERE matchid=?", (mid,))
+                    if self.param_style == 'sqlite':
+                        cursor.execute("DELETE FROM matches WHERE matchid=?", (mid,))
+                    else:
+                        cursor.execute("DELETE FROM matches WHERE matchid=%s", (mid,))
 
             self.conn.commit()
         except Exception as e:
@@ -531,8 +586,12 @@ class XMLCacheManager:
 
         if court_number:
             # We use LIKE for flexibility, assuming court names are often "Court X"
-            sql += " WHERE court LIKE ?"
-            params.append(f"%{court_number}%")
+            if self.param_style == 'sqlite':
+                sql += " WHERE court LIKE ?"
+                params.append(f"%{court_number}%")
+            else:
+                sql += " WHERE court LIKE %s"
+                params.append(f"%{court_number}%")
 
         sql += " ORDER BY timestamp DESC"
 

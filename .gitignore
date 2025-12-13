@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Byte-compiled / packages
+*.egg-info/
+
+# Docker
+*.pid
+
+# Local data (uncomment if you persist DB locally)
+# data/
