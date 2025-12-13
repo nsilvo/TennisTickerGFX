@@ -4,110 +4,58 @@
 <body>
 <nav class="nav-bar">
     <div class="nav-content">
-        <h3 class="nav-title">📊 Dashboard</h3>
-        <ul class="nav-links">
-            <li><a href="/">🏠 Dashboard</a></li>
-            <li><a href="/live_matches">🎬 Live Matches</a></li>
-            <li><a href="/scoreboard">📺 Scoreboard</a></li>
-            <li><a href="/results">📋 Results</a></li>
-            <li><a href="/caspar_bug">🎥 Caspar Overlay</a></li>
-            <li><a href="/help" class="active">❓ Help</a></li>
-        </ul>
-    </div>
-</nav>
+        <h2>📑 API Output Fields</h2>
+        <div class="block">
+            <p><strong>Top-level (GET /api/v1/scores)</strong></p>
+            <ul>
+                <li><code>status</code>: success or error text.</li>
+                <li><code>filter</code>: description of court filter applied.</li>
+                <li><code>tournament_id</code>: current tournament being scraped.</li>
+                <li><code>last_updated</code>: latest match timestamp (formatted string).</li>
+                <li><code>refresh_interval_seconds</code>: scraper interval.</li>
+                <li><code>match_count</code>: number of matches returned.</li>
+                <li><code>matches</code>: array of match objects (see below).</li>
+            </ul>
 
-<div class="container">
-    <title>🎾 Live Score Scraper — Help & Data Reference</title>
+            <p><strong>Match object (common fields)</strong></p>
+            <ul>
+                <li><code>matchid</code> (string): unique match id.</li>
+                <li><code>matchname</code> (string): display title.</li>
+                <li><code>court</code> (string): court label/number.</li>
+                <li><code>matchstatus</code> (string): IN PROGRESS, COMPLETED, UPCOMING/PLAN, TEST.</li>
+                <li><code>timestamp</code> (int): Unix seconds of last update for this match.</li>
+                <li><code>is_plan</code> (int): 1 if planned/upcoming; 0 otherwise.</li>
+                <li><code>schedtime</code> (string): scheduled start time (may be empty).</li>
+                <li><code>winner</code> (string/int): winner flag; <code>winner_name</code> (string): name if completed.</li>
+                <li><code>player1</code>, <code>player2</code>: player display names.</li>
+                <li><code>player1_country</code>, <code>player2_country</code>: 3-letter country codes.</li>
+                <li><code>player1_full</code>, <code>player2_full</code>, <code>player1_surname</code>, <code>player2_surname</code>: raw name fields as provided.</li>
+                <li><code>sets_played_count</code>: number of sets reported (may be 0 for planned).</li>
+                <li><code>game1</code>, <code>game2</code>: current game score for p1/p2 (live only).</li>
+                <li><code>player2serve</code>: "1" means p1 serving, "2" means p2 serving.</li>
+                <li><code>lastservetype</code>: raw serve type flag (if present).</li>
+                <li><code>tournid</code>, <code>eventid</code>, <code>extmid</code>: source identifiers.</li>
+                <li><code>cam</code>, <code>cameraurl</code>, <code>camerarooturl</code>: camera metadata if provided.</li>
+                <li><code>stats_general</code>, <code>stats_match</code>: stats availability flags.</li>
+            </ul>
 
-    <style>
-        :root {
-            --background-dark: #1e1e1e;
-            --surface-dark: #2d2d2d;
-            --text-light: #f0f0f0;
-            --primary-accent: #007bff;
-            --success-color: #28a745;
-            --error-color: #dc3545;
-            --test-color: #ffc107;
-        }
+            <p><strong>Set fields</strong></p>
+            <ul>
+                <li>For each set N (1..11): <code>setN_p1</code>, <code>setN_p2</code> are set games; <code>setN_tb</code> is tie-break value when relevant.</li>
+            </ul>
 
-        /* ===== NAVIGATION ===== */
-        .nav-bar {
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-            background: linear-gradient(
-                180deg,
-                rgba(30, 30, 30, 0.98) 0%,
-                rgba(30, 30, 30, 0.95) 50%,
-                rgba(30, 30, 30, 0) 100%
-            );
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 12px 30px;
-            margin: -30px -30px 30px -30px;
-        }
+            <p><strong>Single-match endpoint</strong></p>
+            <ul>
+                <li><code>GET /api/v1/match/&lt;match_id&gt;</code> returns <code>{ status, match }</code> or 404 with <code>{ error }</code>.</li>
+            </ul>
 
-        .nav-content {
-            max-width: 1100px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            gap: 24px;
-            flex-wrap: wrap;
-        }
+            <p><strong>Tournament switch</strong></p>
+            <ul>
+                <li><code>GET/POST /api/v1/tourid/&lt;new_tour_id&gt;</code> returns <code>{ status, message, new_tournament_id }</code>; errors include <code>{ error }</code>.</li>
+            </ul>
+        </div>
 
-        .nav-title {
-            font-size: 0.95rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: #999;
-            margin: 0;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            list-style: none;
-            margin: 0;
-            padding: 0;
-        }
-
-        .nav-links li {
-            margin: 0;
-            padding: 0;
-        }
-
-        .nav-links a {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            text-decoration: none;
-            color: #999;
-            border: 1px solid transparent;
-            transition: all 0.15s ease;
-        }
-
-        .nav-links a:hover {
-            color: var(--text-light);
-            background: rgba(255, 255, 255, 0.08);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
-
-        .nav-links a.active {
-            color: var(--test-color);
-            background: rgba(255, 193, 7, 0.16);
-            border-color: rgba(255, 193, 7, 0.5);
-        }
-
-        body {
-            margin: 0;
+        </div>
             padding: 30px;
             background: var(--background-dark);
             color: var(--text-light);
