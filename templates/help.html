@@ -229,6 +229,46 @@
 
     <p><a href="/">⬅ Back to Dashboard</a></p>
 
+    <h2>🛠 API Reference</h2>
+    <div class="block">
+        <ul>
+            <li><strong>GET</strong> /api/v1/scores — all cached matches; response includes tournament_id, last_updated, refresh_interval_seconds, match_count, matches[].</li>
+            <li><strong>GET</strong> /api/v1/scores/court/&lt;court_number&gt; — same as above, filtered to one court.</li>
+            <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match lookup; 404 if not found.</li>
+            <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — switch the active tournament being scraped (numeric only).</li>
+        </ul>
+        <p><strong>Example:</strong></p>
+        <pre><code>curl -s http://localhost:5000/api/v1/scores | jq '.match_count, .last_updated'
+curl -s http://localhost:5000/api/v1/scores/court/3 | jq '.matches[] | {matchid, court, matchstatus}'
+curl -s http://localhost:5000/api/v1/match/12345 | jq
+curl -X POST http://localhost:5000/api/v1/tourid/7140 | jq</code></pre>
+        <p><strong>Notes:</strong> all endpoints return JSON; errors include an <code>error</code> field; timestamps are Unix seconds in the match objects and a formatted string in <code>last_updated</code>.</p>
+    </div>
+
+        <div class="block">
+            <h3>⚡ API Explorer (in-browser)</h3>
+            <p>Run a request against this server directly from your browser.</p>
+            <label>Endpoint
+                <select id="api-endpoint" style="width:100%; margin:6px 0; padding:6px;">
+                    <option value="/api/v1/scores">/api/v1/scores</option>
+                    <option value="/api/v1/scores/court/1">/api/v1/scores/court/1</option>
+                    <option value="/api/v1/match/12345">/api/v1/match/12345</option>
+                    <option value="/api/v1/tourid/7140">/api/v1/tourid/7140</option>
+                </select>
+            </label>
+            <label>Method
+                <select id="api-method" style="width:100%; margin:6px 0; padding:6px;">
+                    <option>GET</option>
+                    <option>POST</option>
+                </select>
+            </label>
+            <label>Body (JSON for POST)
+                <textarea id="api-body" rows="3" style="width:100%; margin:6px 0; padding:6px; font-family: monospace;" placeholder='{"key": "value"}'></textarea>
+            </label>
+            <button id="api-run" class="btn" type="button">Run Request</button>
+            <pre id="api-output" style="margin-top:10px; max-height:220px; overflow:auto; background:#00000055; padding:10px; border-radius:6px;">Response will appear here…</pre>
+        </div>
+
     <!-- MAIN DATA FLOW DIAGRAM -->
     <h2>📡 Data Flow Overview</h2>
 
@@ -376,6 +416,31 @@
     </div>
 
     <script>
+        // === API Explorer ===
+        document.getElementById('api-run').addEventListener('click', async () => {
+            const endpoint = document.getElementById('api-endpoint').value.trim();
+            const method = document.getElementById('api-method').value.trim().toUpperCase();
+            const bodyText = document.getElementById('api-body').value.trim();
+            const output = document.getElementById('api-output');
+
+            const options = { method, headers: {} };
+            if (method === 'POST' && bodyText) {
+                options.headers['Content-Type'] = 'application/json';
+                options.body = bodyText;
+            }
+
+            output.textContent = 'Requesting...';
+            try {
+                const res = await fetch(endpoint, options);
+                const text = await res.text();
+                let pretty = text;
+                try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* leave as text */ }
+                output.textContent = `${res.status} ${res.statusText}\n${pretty}`;
+            } catch (err) {
+                output.textContent = `Request failed: ${err}`;
+            }
+        });
+
         // === Set active navigation link ===
         document.addEventListener('DOMContentLoaded', function() {
             const currentPath = window.location.pathname;

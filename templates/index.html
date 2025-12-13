@@ -781,10 +781,10 @@
     <h2>API Endpoints for Reference</h2>
     <div class="api-links">
         <ul>
-            <li><a href="/api/v1/scores">/api/v1/scores</a> (All Matches)</li>
-            <li><a href="/api/v1/scores/court/1">/api/v1/scores/court/1</a> (Filter by Court)</li>
-            <li>/api/v1/match/&lt;match_id&gt; (Single Match Lookup)</li>
-            <li>/api/v1/tourid/&lt;new_tour_id&gt; (POST or GET to change Tournament ID)</li>
+            <li><strong>GET</strong> <a href="/api/v1/scores">/api/v1/scores</a> — all matches, includes tournament_id, last_updated, refresh_interval_seconds, match_count.</li>
+            <li><strong>GET</strong> <a href="/api/v1/scores/court/1">/api/v1/scores/court/1</a> — filter to a specific court.</li>
+            <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match JSON, 404 if missing.</li>
+            <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — change the active tournament being scraped.</li>
         </ul>
     </div>
 </div>
