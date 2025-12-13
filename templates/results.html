@@ -43,6 +43,81 @@
             color: var(--text-light);
             line-height: 1.5;
             min-height: 100vh;
+
+                /* ===== NAVIGATION ===== */
+                .nav-bar {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1000;
+                    background: linear-gradient(
+                        180deg,
+                        rgba(10, 10, 17, 0.98) 0%,
+                        rgba(10, 10, 17, 0.95) 50%,
+                        rgba(10, 10, 17, 0) 100%
+                    );
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                    padding: 12px 16px;
+                }
+
+                .nav-content {
+                    max-width: 1280px;
+                    margin: 0 auto;
+                    display: flex;
+                    align-items: center;
+                    gap: 24px;
+                    flex-wrap: wrap;
+                }
+
+                .nav-title {
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.12em;
+                    color: var(--muted-text);
+                    margin: 0;
+                }
+
+                .nav-links {
+                    display: flex;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                    list-style: none;
+                    margin: 0;
+                    padding: 0;
+                }
+
+                .nav-links li {
+                    margin: 0;
+                    padding: 0;
+                }
+
+                .nav-links a {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    font-size: 0.85rem;
+                    font-weight: 500;
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    text-decoration: none;
+                    color: var(--muted-text);
+                    border: 1px solid transparent;
+                    transition: all 0.15s ease;
+                }
+
+                .nav-links a:hover {
+                    color: var(--text-light);
+                    background: rgba(255, 255, 255, 0.08);
+                    border-color: rgba(255, 255, 255, 0.15);
+                }
+
+                .nav-links a.active {
+                    color: var(--test-color);
+                    background: rgba(255, 193, 7, 0.16);
+                    border-color: rgba(255, 193, 7, 0.5);
+                }
         }
 
         .container {
@@ -319,6 +394,26 @@
 </head>
 <body>
 <div class="container">
+    -</head>
+    -<body>
+    -    <div class="container">
+    </head>
+    <body>
+    <nav class="nav-bar">
+        <div class="nav-content">
+            <h3 class="nav-title">📊 Dashboard</h3>
+            <ul class="nav-links">
+                <li><a href="/">🏠 Dashboard</a></li>
+                <li><a href="/live_matches">🎬 Live Matches</a></li>
+                <li><a href="/scoreboard">📺 Scoreboard</a></li>
+                <li><a href="/results" class="active">📋 Results</a></li>
+                <li><a href="/caspar_bug">🎥 Caspar Overlay</a></li>
+                <li><a href="/help">❓ Help</a></li>
+            </ul>
+        </div>
+    </nav>
+
+        <div class="container">
     <div class="title-bar">
         <div class="title-left">
             <div class="tournament-name" id="tournament_name">Tournament</div>
@@ -548,6 +643,20 @@
             
             resultsContainer.innerHTML = resultsHTML;
         }
+    });
+
+    // === Set active navigation link ===
+    document.addEventListener('DOMContentLoaded', function() {
+        const currentPath = window.location.pathname;
+        const navLinks = document.querySelectorAll('.nav-links a');
+        
+        navLinks.forEach(link => {
+            link.classList.remove('active');
+            const href = link.getAttribute('href');
+            if (href === currentPath || (href === '/' && currentPath === '/')) {
+                link.classList.add('active');
+            }
+        });
     });
 </script>
 </body>
