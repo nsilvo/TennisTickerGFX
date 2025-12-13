@@ -288,6 +288,25 @@ curl -X POST http://localhost:5000/api/v1/tourid/7140 | jq</code></pre>
         </ul>
     </div>
 
+    <h2>🎬 Selecting a Match for Scoreboard/Bug</h2>
+    <div class="block">
+        <p>Overlays pick a match in this order:</p>
+        <ul>
+            <li><code>?matchid=123</code> in the URL forces that match (if it exists).</li>
+            <li>No matchid + exactly one live or warm-up match ⇒ that match is used automatically.</li>
+            <li>Multiple live matches without matchid ⇒ overlays may stay empty; pass a matchid.</li>
+        </ul>
+        <p><strong>Examples:</strong></p>
+        <pre><code>Scoreboard: /caspar/scoreboard/?matchid=12345
+Bug:        /caspar/bug/?matchid=12345
+
+# Quick links from dashboard cards:
+# - Bug button: adds matchid automatically
+# - Scoreboard button: adds matchid automatically
+</code></pre>
+        <p><strong>Tip:</strong> Use the dashboard card buttons (“Bug” or “Scoreboard”) to open the overlay with matchid pre-filled.</p>
+    </div>
+
     <h2>🧾 Example Match JSON</h2>
     <div class="block">
 <pre><code>{
