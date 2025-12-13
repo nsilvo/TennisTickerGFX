@@ -1,3 +1,10 @@
+"""
+File: server.py
+Description: Flask + Socket.IO app serving tennis match data with background XML scraping and overlays.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+"""
 import xml.etree.ElementTree as ET
 import sqlite3
 import os
@@ -30,6 +37,7 @@ app = Flask(__name__)
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
+
     async_mode='gevent',  # use eventlet for proper websockets
     logger=True,
     engineio_logger=True,

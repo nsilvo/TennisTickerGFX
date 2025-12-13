@@ -1,61 +1,29 @@
+<!--
+File: templates/help.html
+Description: Help and API reference page with in-browser API explorer for tennis score service.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
 <!DOCTYPE html>
 <html lang="en">
-</head>
-<body>
-<nav class="nav-bar">
-    <div class="nav-content">
-        <h2>📑 API Output Fields</h2>
-        <div class="block">
-            <p><strong>Top-level (GET /api/v1/scores)</strong></p>
-            <ul>
-                <li><code>status</code>: success or error text.</li>
-                <li><code>filter</code>: description of court filter applied.</li>
-                <li><code>tournament_id</code>: current tournament being scraped.</li>
-                <li><code>last_updated</code>: latest match timestamp (formatted string).</li>
-                <li><code>refresh_interval_seconds</code>: scraper interval.</li>
-                <li><code>match_count</code>: number of matches returned.</li>
-                <li><code>matches</code>: array of match objects (see below).</li>
-            </ul>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Help & API Reference</title>
+    <style>
+        :root {
+            --background-dark: #1e1e1e;
+            --surface-dark: #2d2d2d;
+            --text-light: #f0f0f0;
+            --primary-accent: #007bff;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+            --test-color: #ffc107;
+        }
 
-            <p><strong>Match object (common fields)</strong></p>
-            <ul>
-                <li><code>matchid</code> (string): unique match id.</li>
-                <li><code>matchname</code> (string): display title.</li>
-                <li><code>court</code> (string): court label/number.</li>
-                <li><code>matchstatus</code> (string): IN PROGRESS, COMPLETED, UPCOMING/PLAN, TEST.</li>
-                <li><code>timestamp</code> (int): Unix seconds of last update for this match.</li>
-                <li><code>is_plan</code> (int): 1 if planned/upcoming; 0 otherwise.</li>
-                <li><code>schedtime</code> (string): scheduled start time (may be empty).</li>
-                <li><code>winner</code> (string/int): winner flag; <code>winner_name</code> (string): name if completed.</li>
-                <li><code>player1</code>, <code>player2</code>: player display names.</li>
-                <li><code>player1_country</code>, <code>player2_country</code>: 3-letter country codes.</li>
-                <li><code>player1_full</code>, <code>player2_full</code>, <code>player1_surname</code>, <code>player2_surname</code>: raw name fields as provided.</li>
-                <li><code>sets_played_count</code>: number of sets reported (may be 0 for planned).</li>
-                <li><code>game1</code>, <code>game2</code>: current game score for p1/p2 (live only).</li>
-                <li><code>player2serve</code>: "1" means p1 serving, "2" means p2 serving.</li>
-                <li><code>lastservetype</code>: raw serve type flag (if present).</li>
-                <li><code>tournid</code>, <code>eventid</code>, <code>extmid</code>: source identifiers.</li>
-                <li><code>cam</code>, <code>cameraurl</code>, <code>camerarooturl</code>: camera metadata if provided.</li>
-                <li><code>stats_general</code>, <code>stats_match</code>: stats availability flags.</li>
-            </ul>
-
-            <p><strong>Set fields</strong></p>
-            <ul>
-                <li>For each set N (1..11): <code>setN_p1</code>, <code>setN_p2</code> are set games; <code>setN_tb</code> is tie-break value when relevant.</li>
-            </ul>
-
-            <p><strong>Single-match endpoint</strong></p>
-            <ul>
-                <li><code>GET /api/v1/match/&lt;match_id&gt;</code> returns <code>{ status, match }</code> or 404 with <code>{ error }</code>.</li>
-            </ul>
-
-            <p><strong>Tournament switch</strong></p>
-            <ul>
-                <li><code>GET/POST /api/v1/tourid/&lt;new_tour_id&gt;</code> returns <code>{ status, message, new_tournament_id }</code>; errors include <code>{ error }</code>.</li>
-            </ul>
-        </div>
-
-        </div>
+        body {
+            margin: 0;
             padding: 30px;
             background: var(--background-dark);
             color: var(--text-light);
@@ -75,10 +43,7 @@
             margin: auto;
         }
 
-        a {
-            color: var(--test-color);
-            text-decoration: none;
-        }
+        a { color: var(--test-color); text-decoration: none; }
         a:hover { text-decoration: underline; }
 
         .block {
@@ -95,61 +60,101 @@
             font-size: 0.95em;
         }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 12px;
-        }
-
-        table th, table td {
-            padding: 8px 12px;
-            border-bottom: 1px solid #444;
-        }
-        table th { background: #333; }
-
-        /* Diagram Styles */
-        .diagram {
-            background: #111;
-            padding: 20px;
-            border-radius: 10px;
-            margin-top: 20px;
-            border: 1px solid #444;
-        }
-        .diagram-title {
-            text-align: center;
-            color: var(--test-color);
-            font-weight: bold;
-            margin-bottom: 15px;
-        }
-        .diagram-box {
-            background: #222;
-            border: 1px solid #555;
-            padding: 15px;
+        pre {
+            background: #00000055;
+            padding: 10px;
             border-radius: 6px;
-            text-align: center;
-            margin: 8px 0;
-        }
-        .arrow {
-            text-align: center;
-            font-size: 22px;
-            margin: 5px 0;
-            color: var(--primary-accent);
+            overflow-x: auto;
         }
 
-        /* Flex flow diagram */
-        .flow-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-            margin: 20px 0;
+        /* NAVIGATION */
+        .nav-bar {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: linear-gradient(
+                180deg,
+                rgba(30, 30, 30, 0.98) 0%,
+                rgba(30, 30, 30, 0.95) 50%,
+                rgba(30, 30, 30, 0) 100%
+            );
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 12px 30px;
+            margin: -30px -30px 30px -30px;
         }
-        .flow-item {
-            flex: 1;
-            padding: 15px;
-            background: #222;
-            border: 1px solid #444;
-            text-align: center;
-            border-radius: 8px;
+
+        .nav-content {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .nav-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #999;
+            margin: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .nav-links li { margin: 0; padding: 0; }
+
+        .nav-links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            text-decoration: none;
+            color: #999;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-light);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .nav-links a.active {
+            color: var(--test-color);
+            background: rgba(255, 193, 7, 0.16);
+            border-color: rgba(255, 193, 7, 0.5);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-light);
+            cursor: pointer;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            transition: background 0.15s ease, transform 0.1s ease;
+        }
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.14);
+            transform: translateY(-1px);
         }
     </style>
 </head>
@@ -172,9 +177,7 @@
 <div class="container">
 
     <h1>🎾 Live Score Scraper — Help & Data Reference</h1>
-
-    <p>This guide explains all match variables, how live data flows, and includes diagrams for reference.</p>
-
+    <p>This guide explains the API, fields, and includes an in-browser explorer.</p>
     <p><a href="/">⬅ Back to Dashboard</a></p>
 
     <h2>🛠 API Reference</h2>
@@ -185,7 +188,7 @@
             <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match lookup; 404 if not found.</li>
             <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — switch the active tournament being scraped (numeric only).</li>
         </ul>
-        <p><strong>Example:</strong></p>
+        <p><strong>Examples:</strong></p>
         <pre><code>curl -s http://localhost:5000/api/v1/scores | jq '.match_count, .last_updated'
 curl -s http://localhost:5000/api/v1/scores/court/3 | jq '.matches[] | {matchid, court, matchstatus}'
 curl -s http://localhost:5000/api/v1/match/12345 | jq
@@ -193,215 +196,121 @@ curl -X POST http://localhost:5000/api/v1/tourid/7140 | jq</code></pre>
         <p><strong>Notes:</strong> all endpoints return JSON; errors include an <code>error</code> field; timestamps are Unix seconds in the match objects and a formatted string in <code>last_updated</code>.</p>
     </div>
 
-        <div class="block">
-            <h3>⚡ API Explorer (in-browser)</h3>
-            <p>Run a request against this server directly from your browser.</p>
-            <label>Endpoint
-                <select id="api-endpoint" style="width:100%; margin:6px 0; padding:6px;">
-                    <option value="/api/v1/scores">/api/v1/scores</option>
-                    <option value="/api/v1/scores/court/1">/api/v1/scores/court/1</option>
-                    <option value="/api/v1/match/12345">/api/v1/match/12345</option>
-                    <option value="/api/v1/tourid/7140">/api/v1/tourid/7140</option>
-                </select>
-            </label>
-            <label>Method
-                <select id="api-method" style="width:100%; margin:6px 0; padding:6px;">
-                    <option>GET</option>
-                    <option>POST</option>
-                </select>
-            </label>
-            <label>Body (JSON for POST)
-                <textarea id="api-body" rows="3" style="width:100%; margin:6px 0; padding:6px; font-family: monospace;" placeholder='{"key": "value"}'></textarea>
-            </label>
-            <button id="api-run" class="btn" type="button">Run Request</button>
-            <pre id="api-output" style="margin-top:10px; max-height:220px; overflow:auto; background:#00000055; padding:10px; border-radius:6px;">Response will appear here…</pre>
-        </div>
-
-    <!-- MAIN DATA FLOW DIAGRAM -->
-    <h2>📡 Data Flow Overview</h2>
-
-    <div class="diagram">
-        <div class="diagram-title">Tennis Score Data Flow</div>
-
-        <div class="diagram-box">🎾 TennisTicker XML Feed</div>
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">🐍 Python Scraper (server.py)<br>
-            - Fetch XML<br>
-            - Parse names, sets, tie-breaks<br>
-            - Detect changes<br>
-            - Cache in SQLite</div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">🗄 SQLite Match Cache<br>(casparcg_match_cache.db)</div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">🔌 Flask-SocketIO<br>Sends live_updates events → Browser</div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">🖥 Dashboard Frontend<br>(index.html)<br>Updates cards in real time</div>
-    </div>
-
-
-
-    <!-- LIVE MATCH -->
-    <h2>🔴 LIVE Match Data Structure</h2>
-
-    <div class="diagram">
-        <div class="diagram-title">LIVE Match Breakdown</div>
-
-        <div class="flow-row">
-            <div class="flow-item">Player 1<br><code>player1_surname</code><br><code>player1_country</code></div>
-            <div class="flow-item">Player 2<br><code>player2_surname</code><br><code>player2_country</code></div>
-        </div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="flow-row">
-            <div class="flow-item">
-                Current Game<br><code>game1</code>
-            </div>
-            <div class="flow-item">
-                Current Game<br><code>game2</code>
-            </div>
-        </div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">
-            Set Scores:<br>
-            <code>set1_p1, set1_p2 … setN_p1, setN_p2</code><br>
-            Tie-break: <code>setN_tb</code>
-        </div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">
-            Server Indicator → <code>player2serve</code><br>
-            0 = Player 1 serving<br>
-            1 = Player 2 serving
-        </div>
-    </div>
-
-
+    <h2>⚡ API Explorer (in-browser)</h2>
     <div class="block">
-        <table>
-            <tr><th>Field</th><th>Description</th></tr>
-
-            <tr><td><code>matchid</code></td><td>Unique ID</td></tr>
-            <tr><td><code>matchstatus</code></td><td>Should contain “IN PROGRESS”</td></tr>
-            <tr><td><code>game1</code>, <code>game2</code></td><td>Current point score</td></tr>
-            <tr><td><code>player2serve</code></td><td>Serving indicator</td></tr>
-            <tr><td><code>setN_p1</code></td><td>Player 1 set score</td></tr>
-            <tr><td><code>setN_p2</code></td><td>Player 2 set score</td></tr>
-            <tr><td><code>setN_tb</code></td><td>Tie-break score</td></tr>
-        </table>
-
-        <p>Example LIVE JSON:</p>
-        <pre><code>{
-  "matchid": "123",
-  "player1": "Ben GUSIC",
-  "player2": "Tom WILLIAMS",
-  "game1": "40",
-  "game2": "AD",
-  "player2serve": 1,
-  "set1_p1": 6,
-  "set1_p2": 4,
-  "set2_p1": 3,
-  "set2_p2": 5,
-  "sets_played_count": 2
-}</code></pre>
+        <p>Run a request against this server directly from your browser.</p>
+        <label>Endpoint
+            <select id="api-endpoint" style="width:100%; margin:6px 0; padding:6px;">
+                <option value="/api/v1/scores">/api/v1/scores</option>
+                <option value="/api/v1/scores/court/1">/api/v1/scores/court/1</option>
+                <option value="/api/v1/match/12345">/api/v1/match/12345</option>
+                <option value="/api/v1/tourid/7140">/api/v1/tourid/7140</option>
+            </select>
+        </label>
+        <label>Method
+            <select id="api-method" style="width:100%; margin:6px 0; padding:6px;">
+                <option>GET</option>
+                <option>POST</option>
+            </select>
+        </label>
+        <label>Body (JSON for POST)
+            <textarea id="api-body" rows="3" style="width:100%; margin:6px 0; padding:6px; font-family: monospace;" placeholder='{"key": "value"}'></textarea>
+        </label>
+        <button id="api-run" class="btn" type="button">Run Request</button>
+        <pre id="api-output" style="margin-top:10px; max-height:220px; overflow:auto;">Response will appear here…</pre>
     </div>
 
-
-
-    <!-- COMPLETED MATCH -->
-    <h2>✅ Completed Match Data Structure</h2>
-
-    <div class="diagram">
-        <div class="diagram-title">COMPLETED Match Breakdown</div>
-
-        <div class="diagram-box">
-            Winner:<br>
-            <code>winner</code> (1 or 2)<br>
-            <code>winner_name</code><br>
-        </div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">
-            Final Set Scores:<br>
-            <code>set1_p1, set1_p2, …</code><br>
-            Tie-break included if present
-        </div>
-
-        <div class="arrow">⬇</div>
-
-        <div class="diagram-box">
-            Live game scores are hidden in UI
-        </div>
-    </div>
-
+    <h2>📑 API Output Fields</h2>
     <div class="block">
-        <p>Example Completed Match JSON:</p>
+        <p><strong>Top-level (GET /api/v1/scores)</strong></p>
+        <ul>
+            <li><code>status</code>: success or error text.</li>
+            <li><code>filter</code>: description of court filter applied.</li>
+            <li><code>tournament_id</code>: current tournament being scraped.</li>
+            <li><code>last_updated</code>: latest match timestamp (formatted string).</li>
+            <li><code>refresh_interval_seconds</code>: scraper interval.</li>
+            <li><code>match_count</code>: number of matches returned.</li>
+            <li><code>matches</code>: array of match objects (see below).</li>
+        </ul>
 
-<pre><code>{
-  "matchid": "123",
-  "winner": "1",
-  "winner_name": "Ben Gusic",
-  "set1_p1": 6,
-  "set1_p2": 4,
-  "set2_p1": 7,
-  "set2_p2": 6,
-  "set2_tb": "5",
-  "matchstatus": "COMPLETED"
-}</code></pre>
+        <p><strong>Match object (common fields)</strong></p>
+        <ul>
+            <li><code>matchid</code> (string): unique match id.</li>
+            <li><code>matchname</code> (string): display title.</li>
+            <li><code>court</code> (string): court label/number.</li>
+            <li><code>matchstatus</code> (string): IN PROGRESS, COMPLETED, UPCOMING/PLAN, TEST.</li>
+            <li><code>timestamp</code> (int): Unix seconds of last update for this match.</li>
+            <li><code>is_plan</code> (int): 1 if planned/upcoming; 0 otherwise.</li>
+            <li><code>schedtime</code> (string): scheduled start time (may be empty).</li>
+            <li><code>winner</code> (string/int): winner flag; <code>winner_name</code> (string): name if completed.</li>
+            <li><code>player1</code>, <code>player2</code>: player display names.</li>
+            <li><code>player1_country</code>, <code>player2_country</code>: 3-letter country codes.</li>
+            <li><code>player1_full</code>, <code>player2_full</code>, <code>player1_surname</code>, <code>player2_surname</code>: raw name fields as provided.</li>
+            <li><code>sets_played_count</code>: number of sets reported (may be 0 for planned).</li>
+            <li><code>game1</code>, <code>game2</code>: current game score for p1/p2 (live only).</li>
+            <li><code>player2serve</code>: "1" means p1 serving, "2" means p2 serving.</li>
+            <li><code>lastservetype</code>: raw serve type flag (if present).</li>
+            <li><code>tournid</code>, <code>eventid</code>, <code>extmid</code>: source identifiers.</li>
+            <li><code>cam</code>, <code>cameraurl</code>, <code>camerarooturl</code>: camera metadata if provided.</li>
+            <li><code>stats_general</code>, <code>stats_match</code>: stats availability flags.</li>
+        </ul>
+
+        <p><strong>Set fields</strong></p>
+        <ul>
+            <li>For each set N (1..11): <code>setN_p1</code>, <code>setN_p2</code> are set games; <code>setN_tb</code> is tie-break value when relevant.</li>
+        </ul>
+
+        <p><strong>Single-match endpoint</strong></p>
+        <ul>
+            <li><code>GET /api/v1/match/&lt;match_id&gt;</code> returns <code>{ status, match }</code> or 404 with <code>{ error }</code>.</li>
+        </ul>
+
+        <p><strong>Tournament switch</strong></p>
+        <ul>
+            <li><code>GET/POST /api/v1/tourid/&lt;new_tour_id&gt;</code> returns <code>{ status, message, new_tournament_id }</code>; errors include <code>{ error }</code>.</li>
+        </ul>
     </div>
 
-    </div>
+</div>
 
-    <script>
-        // === API Explorer ===
-        document.getElementById('api-run').addEventListener('click', async () => {
-            const endpoint = document.getElementById('api-endpoint').value.trim();
-            const method = document.getElementById('api-method').value.trim().toUpperCase();
-            const bodyText = document.getElementById('api-body').value.trim();
-            const output = document.getElementById('api-output');
+<script>
+    // API Explorer
+    document.getElementById('api-run').addEventListener('click', async () => {
+        const endpoint = document.getElementById('api-endpoint').value.trim();
+        const method = document.getElementById('api-method').value.trim().toUpperCase();
+        const bodyText = document.getElementById('api-body').value.trim();
+        const output = document.getElementById('api-output');
 
-            const options = { method, headers: {} };
-            if (method === 'POST' && bodyText) {
-                options.headers['Content-Type'] = 'application/json';
-                options.body = bodyText;
-            }
+        const options = { method, headers: {} };
+        if (method === 'POST' && bodyText) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = bodyText;
+        }
 
-            output.textContent = 'Requesting...';
-            try {
-                const res = await fetch(endpoint, options);
-                const text = await res.text();
-                let pretty = text;
-                try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* leave as text */ }
-                output.textContent = `${res.status} ${res.statusText}\n${pretty}`;
-            } catch (err) {
-                output.textContent = `Request failed: ${err}`;
+        output.textContent = 'Requesting...';
+        try {
+            const res = await fetch(endpoint, options);
+            const text = await res.text();
+            let pretty = text;
+            try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) { /* keep raw */ }
+            output.textContent = `${res.status} ${res.statusText}\n${pretty}`;
+        } catch (err) {
+            output.textContent = `Request failed: ${err}`;
+        }
+    });
+
+    // Set active nav link
+    document.addEventListener('DOMContentLoaded', function() {
+        const currentPath = window.location.pathname;
+        const navLinks = document.querySelectorAll('.nav-links a');
+        navLinks.forEach(link => {
+            link.classList.remove('active');
+            const href = link.getAttribute('href');
+            if (href === currentPath || (href === '/' && currentPath === '/')) {
+                link.classList.add('active');
             }
         });
-
-        // === Set active navigation link ===
-        document.addEventListener('DOMContentLoaded', function() {
-            const currentPath = window.location.pathname;
-            const navLinks = document.querySelectorAll('.nav-links a');
-            
-            navLinks.forEach(link => {
-                link.classList.remove('active');
-                const href = link.getAttribute('href');
-                if (href === currentPath || (href === '/' && currentPath === '/')) {
-                    link.classList.add('active');
-                }
-            });
-        });
-    </script>
+    });
+</script>
 </body>
 </html>

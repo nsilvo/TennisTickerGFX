@@ -1,4 +1,9 @@
 version: "3.8"
+# File: docker-compose.yml
+# Description: Orchestrates app and Postgres services for tennis XML scraper.
+# Author: Nathan Silveston
+# Contact: nathan@nkpa.co.uk | +44 7515 018048
+# Copyright (c) 2025 Nathan Silveston. All rights reserved.
 services:
   app:
     build: .
