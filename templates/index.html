@@ -933,7 +933,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         let statusClass = 'status-completed';
 
         if (isLive) {
-            statusLabel = 'LIVE';
+            statusLabel = statusUpper.includes('WARMUP') ? 'WARM-UP' : 'LIVE';
             statusClass = 'status-live';
         } else if (isCompleted) {
             statusLabel = 'COMPLETED';

@@ -1003,7 +1003,9 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         const game1 = match.game1 ?? '';
         const game2 = match.game2 ?? '';
 
-        const statusLabel = isPlanned ? 'UPCOMING' : 'LIVE';
+        const statusLabel = isPlanned
+            ? 'UPCOMING'
+            : (statusUpper.includes('WARMUP') ? 'WARM-UP' : 'LIVE');
         const statusClass = isPlanned ? 'status-planned' : 'status-live';
 
         const matchName = match.matchname || 'Match';
