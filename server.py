@@ -726,6 +726,7 @@ def resolve_match(matchid, auto_single_live=False, fallback_any=False):
         x for x in all_matches
         if "IN PROGRESS" in str(x.get("matchstatus", "")).upper()
         or "TEST" in str(x.get("matchstatus", "")).upper()
+        or "WARMUP" in str(x.get("matchstatus", "")).upper()
     ]
 
     if auto_single_live:

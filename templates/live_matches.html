@@ -1341,7 +1341,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                     const statusUpper = (match.matchstatus || '').toUpperCase();
                     const isCompleted = statusUpper.includes('COMPLETED') || statusUpper.includes('FINISHED');
                     const isWarmup = statusUpper.includes('WARMUP');
-                    const isLive = statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST');
+                    const isLive = statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST') || statusUpper.includes('WARMUP');
                     const isUpcoming = statusUpper.includes('UPCOMING') || match.is_plan === 1 || match.is_plan === "1";
                     
                     // Show court if it has live, warmup, or upcoming matches

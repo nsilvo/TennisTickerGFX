@@ -914,7 +914,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         const hasSched = (match.schedtime || '').trim() !== '';
 
         let isCompleted = forceCompleted || statusUpper.includes('COMPLETED');
-        let isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST'));
+        let isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST') || statusUpper.includes('WARMUP'));
         let isPlanned = !isLive && !isCompleted && (isPlanFlag || hasSched || statusUpper.includes('UPCOMING'));
 
         if (isCompleted) matchDiv.classList.add('completed');
@@ -1169,8 +1169,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             const isPlanA = a.is_plan === 1 || a.is_plan === "1" || (a.schedtime || '').trim() !== '' || statusA.includes('UPCOMING');
             const isPlanB = b.is_plan === 1 || b.is_plan === "1" || (b.schedtime || '').trim() !== '' || statusB.includes('UPCOMING');
 
-            const isLiveA = !isPlanA && (statusA.includes('IN PROGRESS') || statusA.includes('TEST'));
-            const isLiveB = !isPlanB && (statusB.includes('IN PROGRESS') || statusB.includes('TEST'));
+            const isLiveA = !isPlanA && (statusA.includes('IN PROGRESS') || statusA.includes('TEST') || statusA.includes('WARMUP'));
+            const isLiveB = !isPlanB && (statusB.includes('IN PROGRESS') || statusB.includes('TEST') || statusB.includes('WARMUP'));
 
             if (isLiveA !== isLiveB) {
                 return isLiveA ? -1 : 1;
@@ -1191,7 +1191,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             const hasSched = (match.schedtime || '').trim() !== '';
 
             const isCompleted = statusUpper.includes('COMPLETED');
-            const isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST'));
+            const isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST') || statusUpper.includes('WARMUP'));
             const isPlanned = !isLive && !isCompleted && (isPlanFlag || hasSched || statusUpper.includes('UPCOMING'));
 
             if (isLive) {
@@ -1210,7 +1210,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             const hasSched = (match.schedtime || '').trim() !== '';
 
             const isCompleted = statusUpper.includes('COMPLETED');
-            const isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST'));
+            const isLive = !isCompleted && (statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST') || statusUpper.includes('WARMUP'));
             const isPlanned = !isLive && !isCompleted && (isPlanFlag || hasSched || statusUpper.includes('UPCOMING'));
 
             if (isLive) {
