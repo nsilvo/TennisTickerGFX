@@ -1,0 +1,135 @@
+' ============================================================
+' Serve Indicator Automation Script for vMix
+' ============================================================
+' Copyright © 2025 Nathan Silveston. All rights reserved.
+' 
+' Description: Automated serve indicator control that reads
+'              player2serve data from the tennis score API
+'              hosted at https://scores.nkpa.co.uk
+'              and displays the appropriate serve bug.
+'              MatchID is read from a text field in the
+'              specified SCOREBOARD title input.
+'
+' Author: Nathan Silveston (nathan@nkpa.co.uk)
+' Created: December 2025
+' Version: 1.0
+' 
+' Usage: Add this script to vMix and set SCOREBOARD and
+'        API_BASE_URL variables to match your setup.
+' ============================================================
+
+Dim SCOREBOARD As String = "SCOREBOARD"
+Dim API_BASE_URL As String = "https://scores.nkpa.co.uk/api/v1/match"
+Dim lastServeValue As String = ""
+Dim currentServeStatus As String = "unknown"
+
+Console.WriteLine("========== SCRIPT INITIALIZED ==========")
+Console.WriteLine("[INIT] Serve indicator script starting...")
+
+' Check initial state of serve sources
+Try
+    Dim scoreboardInput = Input.Find(SCOREBOARD)
+    If scoreboardInput IsNot Nothing Then
+        Console.WriteLine("[INIT] SCOREBOARD input found")
+        Console.WriteLine("[INIT] Checking initial visibility states...")
+        Console.WriteLine("[INIT] SERVE_1.Source - Initial state: checking...")
+        Console.WriteLine("[INIT] SERVE_2.Source - Initial state: checking...")
+    Else
+        Console.WriteLine("[INIT] WARNING: SCOREBOARD input not found at startup")
+    End If
+Catch ex As Exception
+    Console.WriteLine("[INIT] Error during startup check: " & ex.Message)
+End Try
+
+Console.WriteLine("[INIT] Script ready and monitoring for changes")
+Console.WriteLine("========================================")
+
+While True
+    System.Threading.Thread.Sleep(500)
+    Try
+        ' Get the scoreboard input to read the match ID
+        Dim scoreboardInput = Input.Find(SCOREBOARD)
+        
+        If scoreboardInput Is Nothing Then
+            Console.WriteLine("Scoreboard input not found")
+        Else
+            ' Read the match ID from the text field
+            Dim matchId As String = scoreboardInput.Text("MATCHID.Text")
+            
+            If String.IsNullOrEmpty(matchId) Then
+                Console.WriteLine("Match ID not found in scoreboard")
+            Else
+                ' Fetch the match data from the API using WebRequest
+                Dim url As String = API_BASE_URL & "/" & matchId
+                Dim client = System.Net.WebRequest.Create(url)
+                Dim response = client.GetResponse()
+                
+                If response IsNot Nothing Then
+                    Dim sr As System.IO.StreamReader = New System.IO.StreamReader(CType(response.GetResponseStream(), System.IO.Stream))
+                    Dim jsonContent As String = sr.ReadToEnd()
+                    sr.Close()
+                    
+                    ' Parse player2serve from JSON string manually
+                    Dim serveValue As String = ""
+                    Dim startIndex As Integer = jsonContent.IndexOf("""player2serve""")
+                    
+                    If startIndex > -1 Then
+                        startIndex = jsonContent.IndexOf(":", startIndex) + 1
+                        Dim endIndex As Integer = jsonContent.IndexOf(",", startIndex)
+                        If endIndex = -1 Then
+                            endIndex = jsonContent.IndexOf("}", startIndex)
+                        End If
+                        serveValue = jsonContent.Substring(startIndex, endIndex - startIndex).Trim()
+                        serveValue = serveValue.Replace("""", "").Trim()
+                    End If
+                    
+                    ' Only log and update if serve value changed
+                    If serveValue <> lastServeValue Then
+                        Console.WriteLine("[CHANGE] Serve value changed from '" & lastServeValue & "' to '" & serveValue & "'")
+                        lastServeValue = serveValue
+                        
+                        If serveValue = "1" Then
+                            ' Player 1 (TOP) is serving
+                            Console.WriteLine("[ACTION] Player 1 serving detected")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_1.Source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: VISIBLE")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            currentServeStatus = "Player 1"
+                        ElseIf serveValue = "2" Then
+                            ' Player 2 (BOTTOM) is serving
+                            Console.WriteLine("[ACTION] Player 2 serving detected")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_2.Source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: VISIBLE")
+                            currentServeStatus = "Player 2"
+                        Else
+                            ' No serve data - hide both
+                            Console.WriteLine("[ACTION] No serve data or invalid value")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            currentServeStatus = "None"
+                        End If
+                        Console.WriteLine("[UPDATE] Current status now: " & currentServeStatus)
+                    End If
+                    
+                    response.Close()
+                Else
+                    Console.WriteLine("Error fetching match data")
+                End If
+            End If
+        End If
+        
+    Catch ex As Exception
+        Console.WriteLine("Error: " & ex.Message)
+    End Try
+End While

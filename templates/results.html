@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Results - Match Scoreboard</title>
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"
+            integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA=="
+            crossorigin="anonymous"></script>
+
+    <!-- Flag icons -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css" />
+
+    <style>
+        /* ===== THEME VARIABLES ===== */
+        :root {
+            --background-dark: #101017;
+            --surface-dark: #181821;
+            --surface-elevated: #222230;
+            --text-light: #f5f5f7;
+            --muted-text: #a0a0b0;
+            --primary-accent: #0d6efd;
+            --primary-accent-soft: rgba(13, 110, 253, 0.15);
+            --success-color: #3ddc84;
+            --error-color: #ff4b5c;
+            --test-color: #ffc107;
+            --border-soft: #333344;
+        }
+
+        /* ===== BASE ===== */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            padding: 0;
+            background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+            color: var(--text-light);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+            font-size: 1.6rem;
+        }
+
+        /* ===== TITLE BAR ===== */
+        .title-bar {
+            background: linear-gradient(135deg, rgba(13, 110, 253, 0.16), rgba(61, 220, 132, 0.06));
+            border-radius: 0;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+        }
+
+        .title-left {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .tournament-name {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted-text);
+        }
+
+        .results-title {
+            font-size: 1.6rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, var(--success-color), var(--test-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .match-count {
+            font-size: 0.85rem;
+            color: var(--muted-text);
+            padding: 6px 12px;
+            background: rgba(13, 110, 253, 0.1);
+            border-radius: 6px;
+        }
+
+        .results-container {
+            flex: 1;
+            padding: 16px;
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            align-items: flex-start;
+        }
+
+        .court-column {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+            min-width: 320px;
+        }
+
+        .court-header-section {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--test-color);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 8px 12px;
+            background: rgba(255, 193, 7, 0.1);
+            border-radius: 6px;
+            border-left: 3px solid var(--test-color);
+            text-align: center;
+        }
+
+        .match-card {
+            background: radial-gradient(circle at top left, rgba(61, 220, 132, 0.16), rgba(8, 8, 14, 0.95));
+            border-radius: 16px;
+            padding: 0;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+            display: flex;
+            flex-direction: column;
+            min-height: 138px;
+            position: relative;
+            opacity: 0.92;
+            transition: all 0.3s ease;
+        }
+
+        .match-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 50px rgba(61, 220, 132, 0.2);
+        }
+
+        .match-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 8px 14px;
+            background: linear-gradient(
+                90deg,
+                rgba(5, 5, 16, 0.92) 0%,
+                rgba(19, 19, 32, 0.98) 32%,
+                rgba(61, 220, 132, 0.5) 100%
+            );
+        }
+
+        .match-header-left {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .match-name {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .match-meta {
+            font-size: 0.75rem;
+            color: var(--muted-text);
+        }
+
+        .match-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-pill {
+            padding: 2px 9px;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(0, 0, 0, 0.4);
+            border-color: var(--muted-text);
+            color: var(--muted-text);
+        }
+
+        .match-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) auto auto;
+            column-gap: 10px;
+            padding: 8px 14px 10px;
+            align-items: stretch;
+        }
+
+        .players-column {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .player-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            align-items: center;
+            column-gap: 8px;
+            padding: 3px 0;
+        }
+
+        .player-flag {
+            font-size: 1.2rem;
+        }
+
+        .player-name {
+            font-size: 0.98rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-transform: uppercase;
+        }
+
+        .sets-column {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            padding: 2px 0;
+        }
+
+        .sets-row {
+            display: inline-grid;
+            grid-auto-flow: column;
+            grid-auto-columns: 26px;
+            gap: 3px;
+        }
+
+        .set-cell {
+            font-size: 0.86rem;
+            text-align: center;
+            padding: 3px 0;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(0, 0, 0, 0.35);
+            color: var(--muted-text);
+        }
+
+        .set-won {
+            background: rgba(61, 220, 132, 0.28);
+            border-color: rgba(61, 220, 132, 0.85);
+            color: var(--text-light);
+            font-weight: 600;
+        }
+
+        .match-footer {
+            padding: 6px 14px 9px;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+        }
+
+        .placeholder {
+            grid-column: 1 / -1;
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--muted-text);
+            font-size: 1rem;
+        }
+
+        .placeholder-icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+
+        /* ===== SCROLLBAR ===== */
+        .results-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .results-container::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .results-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+
+        .results-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="title-bar">
+        <div class="title-left">
+            <div class="tournament-name" id="tournament_name">Tournament</div>
+            <div class="results-title">Results</div>
+        </div>
+        <div class="match-count" id="match_count">0 Completed</div>
+    </div>
+    <div class="results-container" id="results_container">
+        <div class="placeholder">
+            <div class="placeholder-icon">📋</div>
+            <div>Waiting for match data...</div>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    const iso3ToIso2 = {
+        'GBR': 'gb', 'USA': 'us', 'CAN': 'ca', 'FRA': 'fr', 'AUS': 'au',
+        'GER': 'de', 'ESP': 'es', 'ITA': 'it', 'SUI': 'ch', 'BEL': 'be',
+        'NED': 'nl', 'SWE': 'se', 'NOR': 'no', 'FIN': 'fi', 'JPN': 'jp',
+        'CHN': 'cn', 'IND': 'in', 'BRA': 'br', 'ARG': 'ar', 'RSA': 'za',
+        'CZE': 'cz', 'POL': 'pl', 'DEN': 'dk', 'AUT': 'at', 'ROU': 'ro',
+        'SRB': 'rs', 'CRO': 'hr', 'IRL': 'ie', 'SCO': 'gb-sct', 'WAL': 'gb-wls'
+    };
+
+    const getTwoLetterCode = (threeLetterCode) => {
+        if (!threeLetterCode) return '';
+        const upperCode = threeLetterCode.toUpperCase();
+        return iso3ToIso2[upperCode] || '';
+    };
+
+    const socket = io();
+    const resultsContainer = document.getElementById('results_container');
+    const matchCountEl = document.getElementById('match_count');
+    const tournamentNameEl = document.getElementById('tournament_name');
+
+    const toInt = (val) => {
+        const n = parseInt(val, 10);
+        return Number.isNaN(n) ? 0 : n;
+    };
+
+    const renderResultCard = (match) => {
+        const p1CountryCode = getTwoLetterCode(match.player1_country);
+        const p2CountryCode = getTwoLetterCode(match.player2_country);
+
+        const player1Name = match.player1 || 'Player 1';
+        const player2Name = match.player2 || 'Player 2';
+
+        // Determine winner by comparing set scores
+        let p1Sets = 0;
+        let p2Sets = 0;
+        for (let i = 1; i <= 11; i++) {
+            const p1Score = toInt(match[`set${i}_p1`]);
+            const p2Score = toInt(match[`set${i}_p2`]);
+            if (p1Score > p2Score) p1Sets++;
+            else if (p2Score > p1Score) p2Sets++;
+        }
+
+        const isP1Winner = p1Sets > p2Sets;
+
+        // Build set cells
+        let p1SetsHTML = '';
+        let p2SetsHTML = '';
+        
+        for (let i = 1; i <= 11; i++) {
+            const p1Score = toInt(match[`set${i}_p1`]);
+            const p2Score = toInt(match[`set${i}_p2`]);
+            if (p1Score === 0 && p2Score === 0) continue;
+
+            const tbVal = match[`set${i}_tb`];
+            let p1Display = p1Score.toString();
+            let p2Display = p2Score.toString();
+
+            // Handle tiebreak display
+            if (tbVal && tbVal !== "" && tbVal !== "0") {
+                if (p1Score === 7 && p2Score === 6) {
+                    // P1 won tiebreak
+                    p2Display = `${p2Score}(${tbVal})`;
+                } else if (p2Score === 7 && p1Score === 6) {
+                    // P2 won tiebreak
+                    p1Display = `${p1Score}(${tbVal})`;
+                }
+            }
+
+            let p1CellClass = 'set-cell';
+            let p2CellClass = 'set-cell';
+            
+            // Highlight the set that was won (higher score)
+            if (p1Score > p2Score) {
+                p1CellClass += ' set-won';
+            } else if (p2Score > p1Score) {
+                p2CellClass += ' set-won';
+            }
+
+            p1SetsHTML += `<span class="${p1CellClass}">${p1Display}</span>`;
+            p2SetsHTML += `<span class="${p2CellClass}">${p2Display}</span>`;
+        }
+
+        const matchName = match.matchname || 'Match';
+
+        return `
+            <div class="match-card">
+                <div class="match-header">
+                    <div class="match-header-left">
+                        <div class="match-name">${matchName}</div>
+                        <div class="match-meta">Completed</div>
+                    </div>
+                    <div class="match-header-right">
+                        <span class="status-pill">Completed</span>
+                    </div>
+                </div>
+                <div class="match-body">
+                    <div class="players-column">
+                        <div class="player-row">
+                            <div class="player-flag"><i class="flag-icon flag-icon-${p1CountryCode}"></i></div>
+                            <div class="player-name">${player1Name}</div>
+                        </div>
+                        <div class="player-row">
+                            <div class="player-flag"><i class="flag-icon flag-icon-${p2CountryCode}"></i></div>
+                            <div class="player-name">${player2Name}</div>
+                        </div>
+                    </div>
+                    <div class="sets-column">
+                        <div class="sets-row">${p1SetsHTML}</div>
+                        <div class="sets-row">${p2SetsHTML}</div>
+                    </div>
+                </div>
+                <div class="match-footer">
+                    Winner: ${isP1Winner ? player1Name : player2Name}
+                </div>
+            </div>
+        `;
+    };
+
+    socket.on('connect', function () {
+        console.log('SocketIO Connected.');
+    });
+
+    socket.on('disconnect', function () {
+        console.warn('SocketIO Disconnected.');
+    });
+
+    socket.on('live_updates', function (data) {
+        console.log('Results update received');
+
+        const allMatches = data.live_matches || data.matches || [];
+
+        // Filter for completed matches
+        const completedMatches = [];
+        for (const match of allMatches) {
+            const statusUpper = (match.matchstatus || '').toUpperCase();
+            if (statusUpper.includes('COMPLETED') || statusUpper.includes('FINISHED')) {
+                completedMatches.push(match);
+            }
+        }
+
+        // Update tournament name
+        if (completedMatches.length > 0) {
+            const tournName = completedMatches[0].tname || 'Tournament';
+            tournamentNameEl.textContent = tournName;
+        }
+
+        // Update match count
+        matchCountEl.textContent = completedMatches.length + (completedMatches.length === 1 ? ' Completed' : ' Completed');
+
+        // Render results
+        if (completedMatches.length === 0) {
+            resultsContainer.innerHTML = `
+                <div class="placeholder">
+                    <div class="placeholder-icon">📋</div>
+                    <div>No completed matches yet</div>
+                </div>
+            `;
+        } else {
+            // Group matches by court number
+            const courtGroups = {};
+            for (const match of completedMatches) {
+                const courtRaw = (match.court || 'No Court').toString();
+                const courtMatch = courtRaw.match(/\d+/);
+                const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
+                const court = courtNum || 'Unknown';
+                
+                if (!courtGroups[court]) {
+                    courtGroups[court] = [];
+                }
+                courtGroups[court].push(match);
+            }
+
+            // Sort matches within each court by match ID
+            for (const court in courtGroups) {
+                courtGroups[court].sort((a, b) => {
+                    const idA = toInt(a.matchid);
+                    const idB = toInt(b.matchid);
+                    return idA - idB;
+                });
+            }
+
+            // Sort courts by court number
+            const sortedCourts = Object.keys(courtGroups).sort((a, b) => {
+                const numA = parseInt(a, 10);
+                const numB = parseInt(b, 10);
+                if (isNaN(numA)) return 1;  // Push 'Unknown' to the end
+                if (isNaN(numB)) return -1;
+                return numA - numB;
+            });
+
+            // Build HTML with court columns
+            let resultsHTML = '';
+            
+            for (const court of sortedCourts) {
+                const matches = courtGroups[court];
+                
+                // Take only the first 3 matches per court (to fit on one page)
+                const matchesToShow = matches.slice(0, 3);
+                
+                // Add court column
+                resultsHTML += `<div class="court-column">`;
+                resultsHTML += `<div class="court-header-section">Court ${court}</div>`;
+                
+                // Add matches for this court
+                for (const match of matchesToShow) {
+                    resultsHTML += renderResultCard(match);
+                }
+                
+                resultsHTML += `</div>`;
+            }
+            
+            resultsContainer.innerHTML = resultsHTML;
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+Flask==2.3.3
+Flask-SocketIO==5.3.6
+gevent==24.2.1
+gevent-websocket==0.10.1
+Jinja2==3.1.2
+python-socketio==5.11.2
+requests==2.32.3
+schedule==1.2.1
+sqlite3-binary; platform_system == "Linux"

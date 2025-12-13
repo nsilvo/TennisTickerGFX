@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Caspar Scoreboard (TV Bar)</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css"/>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: rgba(0,0,0,0);
+    font-family: Arial, sans-serif;
+}
+
+body.browser-preview {
+    background: #1a1a1a !important;
+}
+
+#canvas {
+    position: absolute;
+    width: 1920px;
+    height: 1080px;
+    top: 0;
+    left: 0;
+    background: transparent;
+}
+
+/* Scoreboard container: centered top bar */
+#scoreboard-safe {
+    position: absolute;
+    top: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 900px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+
+.scoreboard-bar {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr) auto;
+    column-gap: 16px;
+    align-items: stretch;
+
+    /* Visible bar (dark, semi-solid) – panel only, page still alpha */
+    background: linear-gradient(90deg, rgba(10,10,18,0.96), rgba(15,15,30,0.96));
+    border-radius: 18px;
+    border: 2px solid rgba(255,255,255,0.25);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.7);
+}
+
+/* Left side: players + sets */
+.sb-left {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    padding: 10px 18px;
+}
+
+.sb-player-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 3px 0;
+}
+
+.sb-player-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sb-flag {
+    font-size: 1.4rem;
+}
+
+.sb-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.sb-sets {
+    display: inline-grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 32px;
+    gap: 4px;
+}
+
+.sb-set-cell {
+    min-width: 32px;
+    padding: 4px 0;
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #dddddd;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+}
+
+.sb-set-won {
+    background: rgba(61, 220, 132, 0.4);
+    border-color: rgba(61, 220, 132, 0.9);
+    color: #ffffff;
+}
+
+.sb-set-lost {
+    opacity: 0.75;
+}
+
+/* Right side: current games + meta */
+.sb-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    padding-right: 18px;
+    gap: 4px;
+    border-left: 1px solid rgba(255,255,255,0.12);
+}
+
+.sb-games {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+}
+
+.sb-game-row {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #ffdd55;
+    letter-spacing: 0.08em;
+}
+
+.sb-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: #bbbbcc;
+}
+
+.sb-meta {
+    font-size: 0.75rem;
+    color: #ccccdd;
+}
+
+/* Serve indicator (yellow bar on side of serving player) */
+.sb-serve-indicator {
+    width: 8px;
+    height: 28px;
+    border-radius: 4px;
+    background: #ffd700;
+    margin-right: 6px;
+}
+.sb-serve-off {
+    background: transparent;
+}
+
+/* Debug */
+{% if debug_mode %}
+#scoreboard-safe { outline: 2px dashed red; }
+.scoreboard-bar { outline: 1px dashed yellow; }
+
+#debug-panel {
+    position: absolute;
+    top: 180px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 480px;
+    background: rgba(0,0,0,0.6);
+    color: #0f0;
+    padding: 12px;
+    border: 1px solid #0f0;
+    font-family: monospace;
+    font-size: 15px;
+    border-radius: 6px;
+    pointer-events: none;
+}
+{% endif %}
+
+.swipe {
+    animation: swipeAnim 0.35s ease;
+}
+@keyframes swipeAnim {
+    0% { transform: translateY(100%); opacity: 0; }
+    100% { transform: translateY(0); opacity: 1; }
+}
+
+.pulse {
+    animation: pulseAnim 0.3s ease;
+}
+@keyframes pulseAnim {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+    100% { transform: scale(1); }
+}
+</style>
+</head>
+
+<body>
+<div id="canvas">
+    {% if debug_mode %}
+    <div id="debug-panel">
+        <b>🐞 SCOREBOARD DEBUG</b><br>
+        Match ID: <span id="dbg-matchid">{{ match_data.matchid if match_data else "NONE" }}</span>
+        <hr>
+        <pre id="dbg-socket">{waiting...}</pre>
+    </div>
+    {% endif %}
+
+    <div id="scoreboard-safe">
+        <div id="scoreboard-bar" class="scoreboard-bar">
+            <div id="sb-left" class="sb-left"></div>
+            <div id="sb-right" class="sb-right"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    const ua = navigator.userAgent.toLowerCase();
+    const isVmix = ua.includes("vmix");
+    const isCaspar = ua.includes("cef") || window.caspar;
+
+    if (!isVmix && !isCaspar) {
+        document.body.classList.add("browser-preview");
+        console.log("Scoreboard: normal browser → preview background");
+    } else {
+        console.log("Scoreboard: studio environment → true alpha");
+    }
+})();
+</script>
+
+<script>
+const isoMap = {
+    'GBR':'gb','ESP':'es','SRB':'rs','FRA':'fr','GER':'de','USA':'us','CAN':'ca','AUS':'au',
+    'NED':'nl','SUI':'ch','ITA':'it','CRO':'hr','POL':'pl','SWE':'se','NOR':'no','ARG':'ar',
+    'BRA':'br','ROU':'ro','DEN':'dk','POR':'pt','BEL':'be','FIN':'fi','CHN':'cn','JPN':'jp',
+    'HUN':'hu','IRL':'ie','SCO':'gb-sct','WAL':'gb-wls'
+};
+function toISO2(c){ return isoMap[(c||"").toUpperCase()] || c.toLowerCase().slice(0,2); }
+
+let matchData = {{ match_data|tojson if match_data else "{}" }};
+if (Object.keys(matchData).length > 0) {
+    matchData = {
+        ...matchData,
+        p1name: matchData.player1_surname || matchData.player1 || "Player 1",
+        p2name: matchData.player2_surname || matchData.player2 || "Player 2",
+        p1flag: toISO2(matchData.player1_country),
+        p2flag: toISO2(matchData.player2_country)
+    };
+}
+let matchId = matchData.matchid || null;
+
+function toInt(v){
+    const n = parseInt(v,10);
+    return Number.isNaN(n) ? 0 : n;
+}
+
+function buildSets(match, prefix){
+    const setsPlayed = Number(match.sets_played_count) || 0;
+    let html = "";
+
+    for(let i=1;i<=setsPlayed;i++){
+        const p1Key = `set${i}_p1`;
+        const p2Key = `set${i}_p2`;
+        const val1 = toInt(match[p1Key]);
+        const val2 = toInt(match[p2Key]);
+
+        if(val1 === 0 && val2 === 0) continue;
+
+        let cls = "sb-set-cell";
+        if(prefix === "p1" && val1 > val2) cls += " sb-set-won";
+        else if(prefix === "p2" && val2 > val1) cls += " sb-set-won";
+        else if(val1 !== val2) cls += " sb-set-lost";
+
+        const disp = prefix === "p1" ? val1 : val2;
+
+        html += `<span class="${cls}">${disp}</span>`;
+    }
+
+    if(!html) html = `<span class="sb-set-cell">–</span>`;
+    return html;
+}
+
+function renderScoreboard(m){
+    const left = document.getElementById("sb-left");
+    const right = document.getElementById("sb-right");
+
+    const p1Sets = buildSets(m, "p1");
+    const p2Sets = buildSets(m, "p2");
+    const game1 = m.game1 || "";
+    const game2 = m.game2 || "";
+
+    const p1ServeOn = (m.player2serve == 0);
+    const p2ServeOn = (m.player2serve == 1);
+
+    left.innerHTML = `
+        <div class="sb-player-row">
+            <div class="sb-player-info">
+                <div class="${p1ServeOn ? "sb-serve-indicator" : "sb-serve-indicator sb-serve-off"}"></div>
+                <span class="sb-flag"><span class="flag-icon flag-icon-${m.p1flag}"></span></span>
+                <span class="sb-name">${m.p1name}</span>
+            </div>
+            <div class="sb-sets">${p1Sets}</div>
+        </div>
+        <div class="sb-player-row">
+            <div class="sb-player-info">
+                <div class="${p2ServeOn ? "sb-serve-indicator" : "sb-serve-indicator sb-serve-off"}"></div>
+                <span class="sb-flag"><span class="flag-icon flag-icon-${m.p2flag}"></span></span>
+                <span class="sb-name">${m.p2name}</span>
+            </div>
+            <div class="sb-sets">${p2Sets}</div>
+        </div>
+    `;
+
+    right.innerHTML = `
+        <div class="sb-games">
+            <div class="sb-game-row">${game1 || "–"}</div>
+            <div class="sb-game-row">${game2 || "–"}</div>
+        </div>
+        <div class="sb-label">CURRENT GAME</div>
+        <div class="sb-meta">
+            ${m.court ? `Court: ${m.court}` : ""} ${m.matchname ? "· " + m.matchname : ""}
+        </div>
+    `;
+}
+
+if (matchData.matchid){
+    renderScoreboard(matchData);
+}
+
+function updateScoreboard(newRaw){
+    const updated = {
+        ...newRaw,
+        p1name: newRaw.player1_surname || newRaw.player1 || "Player 1",
+        p2name: newRaw.player2_surname || newRaw.player2 || "Player 2",
+        p1flag: toISO2(newRaw.player1_country),
+        p2flag: toISO2(newRaw.player2_country)
+    };
+
+    matchId = updated.matchid;
+
+    if(updated.winner_name && updated.winner_name.trim() !== ""){
+        // You could hide or grey out the bar here if you wish.
+    }
+
+    const bar = document.getElementById("scoreboard-bar");
+    if (matchData && (updated.game1 !== matchData.game1 || updated.game2 !== matchData.game2)) {
+        bar.classList.add("swipe");
+        setTimeout(()=>bar.classList.remove("swipe"), 350);
+    }
+
+    matchData = updated;
+    renderScoreboard(updated);
+}
+
+const socket = io(window.location.origin);
+
+socket.on("live_updates", data => {
+    {% if debug_mode %}
+    const dbg = document.getElementById("dbg-socket");
+    if(dbg) dbg.textContent = JSON.stringify(data, null, 2);
+    {% endif %}
+
+    if(!data.live_matches) return;
+
+    if(!matchId && data.live_matches.length > 0){
+        matchId = data.live_matches[0].matchid;
+    }
+
+    const updated = data.live_matches.find(m => m.matchid === matchId);
+    if(updated) updateScoreboard(updated);
+});
+</script>
+
+</body>
+</html>
+

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Caspar Floating Score Bug</title>
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+
+    <!-- Flag icons -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css"/>
+
+    <style>
+        :root {
+            --bg-transparent: transparent;
+            --row-bg: rgba(255, 255, 255, 0.90);  /* Option 1: bright white strips */
+            --text-dark: #111320;
+            --muted-text: #555a70;
+            --accent-game: #ffc107;
+            --accent-outline: rgba(0, 0, 0, 0.1);
+            --set-bg: rgba(248, 249, 252, 0.8);
+            --set-border: rgba(0, 0, 0, 0.12);
+            --set-win-bg: rgba(61, 220, 132, 0.25);
+            --set-win-border: rgba(61, 220, 132, 0.9);
+            --drop-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            {% if debug_mode %}
+            background: #000000;   /* Black background when debug=1 so you can see it in a browser */
+            {% else %}
+            background: transparent;  /* For CasparCG / vMix alpha */
+            {% endif %}
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        #canvas {
+            position: absolute;
+            width: 1920px;
+            height: 1080px;
+            top: 0;
+            left: 0;
+            background: transparent;
+            pointer-events: none; /* So CasparCG/vMix don’t get weird clicks */
+        }
+
+        /* Safe area in top-left: 60px inset, as per your earlier bug */
+        #safe-container {
+            position: absolute;
+            top: 60px;
+            left: 60px;
+            background: transparent;
+        }
+
+        /* Floating bug strip */
+        #bug {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 2px;
+            background: transparent;
+            box-shadow: var(--drop-shadow);
+            border-radius: 10px;
+            overflow: visible;
+            opacity: 0;
+            transform: translateX(-40px);
+            transition: opacity 0.35s ease, transform 0.35s ease;
+        }
+
+        #bug.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        #bug.hidden {
+            opacity: 0;
+            transform: translateX(-40px);
+        }
+
+        .player-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            column-gap: 12px;
+            padding: 4px 10px;
+            min-width: 520px;
+            background: var(--row-bg);
+        }
+
+        .player-row:first-child {
+            border-radius: 10px 10px 0 0;
+        }
+
+        .player-row:last-child {
+            border-radius: 0 0 10px 10px;
+        }
+
+        .player-row + .player-row {
+            border-top: 1px solid rgba(0, 0, 0, 0.08);
+        }
+
+        .player-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 130px;
+        }
+
+        .flag-icon {
+            font-size: 1.25rem;
+        }
+
+        .surname {
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--text-dark);
+            text-transform: uppercase;
+            max-width: 140px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sets {
+            display: block;
+            gap: 4px;
+            align-items: center;
+            width: 100%;
+        }
+
+        /* Each player's sets row: render items right-to-left so set1 appears at the right
+           and new sets are added to the left. Use flex row-reverse and small gap (<=5px). */
+        .sets-row {
+            display: flex;
+            flex-direction: row-reverse;
+            gap: 4px; /* <=5px as requested */
+            align-items: center;
+            justify-content: flex-end; /* anchor boxes to the right */
+        }
+
+        .set-cell {
+            width: 30px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            border: 1px solid var(--set-border);
+            background: var(--set-bg);
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-align: center;
+            color: var(--text-dark);
+            box-sizing: border-box;
+        }
+
+        .set-cell.win {
+            background: var(--set-win-bg);
+            border-color: var(--set-win-border);
+        }
+
+        .set-cell.loss {
+            opacity: 0.8;
+        }
+
+        .right-block {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding-left: 8px;
+            min-width: 56px;
+        }
+
+        .game-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 8px;
+        }
+
+        .game-box {
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            border: 1px solid var(--accent-outline);
+            background: #111827;
+            color: var(--accent-game);
+            font-weight: 800;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            letter-spacing: 0.02em;
+            box-sizing: border-box;
+        }
+
+        /* Place serve-dot to the right of the score box */
+        .serve-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: transparent;
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            box-sizing: border-box;
+        }
+
+        .serve-dot.active {
+            background: var(--accent-game);
+            box-shadow: 0 0 0 6px rgba(255, 193, 7, 0.18);
+            border-color: rgba(255, 193, 7, 0.9);
+        }
+
+        /* Grid that aligns each player's name, their sets, and their game box on the same row */
+        .bug-grid {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            grid-auto-rows: 30px;
+            gap: 4px 8px;
+            align-items: center;
+            min-width: 520px;
+            padding: 6px 10px;
+            background: transparent;
+        }
+
+        .bug-grid .player-left {
+            padding: 0;
+            min-width: 130px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .bug-grid .right-cell {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+        }
+
+        /* Animations for score change / serve change */
+        .pulse {
+            animation: pulseAnim 0.25s ease-out;
+        }
+
+        @keyframes pulseAnim {
+            0%   { transform: scale(1);   }
+            50%  { transform: scale(1.2); }
+            100% { transform: scale(1);   }
+        }
+
+        .flash {
+            animation: flashAnim 0.35s ease-out;
+        }
+
+        @keyframes flashAnim {
+            0%   { background-color: rgba(255, 243, 205, 1); }
+            100% { background-color: var(--row-bg); }
+        }
+
+        .serve-pulse {
+            animation: servePulse 0.25s ease-out;
+        }
+
+        @keyframes servePulse {
+            0%   { transform: scale(1); }
+            50%  { transform: scale(1.4); }
+            100% { transform: scale(1); }
+        }
+
+        /* Debug helper text when no match_data in debug mode */
+        #debug-info {
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #ccc;
+            {% if not debug_mode %}
+            display: none;
+            {% endif %}
+        }
+    </style>
+</head>
+
+<body>
+<div id="canvas">
+    <div id="safe-container">
+        <div id="bug" class="hidden">
+            <!-- rows injected via JS -->
+        </div>
+
+        <div id="debug-info">
+            {% if debug_mode %}
+            Debug mode is ON.
+            {% if not match_data %}
+            No initial match_data passed – waiting for WebSocket updates.
+            {% else %}
+            Showing initial match: {{ match_data.matchid }} ({{ match_data.player1 }} vs {{ match_data.player2 }})
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Template variables from Flask ---
+    const initialMatchData = {{ match_data|tojson if match_data is not none else 'null' }};
+    const debugMode = {{ 'true' if debug_mode else 'false' }};
+
+    // We track current match ID and data
+    let matchData = initialMatchData;
+    let currentMatchId = matchData ? matchData.matchid : null;
+
+    const bugEl = document.getElementById('bug');
+
+    // --- ISO 3 -> flag-icon code ---
+    const iso3ToIso2 = {
+        'GBR':'gb','ESP':'es','SRB':'rs','FRA':'fr','GER':'de','USA':'us','CAN':'ca','AUS':'au',
+        'NED':'nl','SUI':'ch','ITA':'it','CRO':'hr','POL':'pl','SWE':'se','NOR':'no','ARG':'ar',
+        'BRA':'br','ROU':'ro','DEN':'dk','POR':'pt','BEL':'be','FIN':'fi','CHN':'cn','JPN':'jp',
+        'HUN':'hu','IRL':'ie','SCO':'gb-sct','WAL':'gb-wls','RSA':'za','CZE':'cz','AUT':'at','IND':'in'
+    };
+    function toISO2(code) {
+        if (!code) return '';
+        const upper = code.toUpperCase();
+        return iso3ToIso2[upper] || upper.slice(0,2).toLowerCase();
+    }
+
+    function toInt(val) {
+        const n = parseInt(val, 10);
+        return Number.isNaN(n) ? 0 : n;
+    }
+
+        // --- Build helpers for the bug layout ---
+        function buildPlayerInfoHTML(match, isP1) {
+                const prefix = isP1 ? 'p1' : 'p2';
+                const surnameKey = prefix === 'p1' ? 'player1_surname' : 'player2_surname';
+                const fullNameKey = prefix === 'p1' ? 'player1' : 'player2';
+                const countryKey = prefix === 'p1' ? 'player1_country' : 'player2_country';
+
+                const surname = (match[surnameKey] || '').trim() || (match[fullNameKey] || '').trim();
+                const countryISO2 = toISO2(match[countryKey] || '');
+                return `
+                    <div class="player-left" data-row="${prefix}">
+                        <span class="flag-icon flag-icon-${countryISO2}"></span>
+                        <span class="surname" data-key="surname_${prefix}">${surname}</span>
+                    </div>`;
+        }
+
+        function buildPlayerLeftHTML(match, isP1) {
+                // For convenience; same as buildPlayerInfoHTML but named for clarity
+                return buildPlayerInfoHTML(match, isP1);
+        }
+
+        // Build a single player's sets-row HTML
+        function buildPlayerSetsRowHTML(match, isP1) {
+                const prefix = isP1 ? 'p1' : 'p2';
+                const setsPlayed = toInt(match.sets_played_count) || 0;
+                const maxSets = Math.max(setsPlayed, 1);
+                let cells = '';
+
+                for (let i = 1; i <= maxSets; i++) {
+                        const playerSetKey = `set${i}_${prefix}`;
+                        const opponentSetKey = `set${i}_${isP1 ? 'p2' : 'p1'}`;
+                        const tbKey = `set${i}_tb`;
+
+                        if (match[playerSetKey] == null && match[opponentSetKey] == null) continue;
+
+                        const playerSet = toInt(match[playerSetKey]);
+                        const opponentSet = toInt(match[opponentSetKey]);
+                        const tb = match[tbKey];
+
+                        let disp = playerSet.toString();
+                        if (tb && tb !== "0") {
+                                if (playerSet === opponentSet && tb) {
+                                        disp = `${disp}(${tb})`;
+                                }
+                        }
+
+                        let cls = 'set-cell';
+                        if (playerSet !== 0 || opponentSet !== 0) {
+                                if (playerSet > opponentSet) cls += ' win'; else if (playerSet < opponentSet) cls += ' loss';
+                        }
+
+                        cells += `<span class="${cls}" data-key="set_${prefix}_${i}">${disp}</span>`;
+                }
+
+                if (!cells) cells = `<span class="set-cell" data-key="set_${prefix}_1">–</span>`;
+                return `<div class="sets-row">${cells}</div>`;
+        }
+
+        // Build a single player's game score + serve icon cell
+        function buildPlayerGameScoreHTML(match, isP1, isServing) {
+                const prefix = isP1 ? 'p1' : 'p2';
+                const gameKey = isP1 ? 'game1' : 'game2';
+                const gameScore = (match[gameKey] || '').toString();
+                return `
+                    <div class="right-cell">
+                        <div class="game-wrap">
+                            <div class="game-box" data-key="game_${prefix}">${gameScore}</div>
+                            <div class="serve-dot ${isServing ? 'active' : ''}" data-key="serve_${prefix}"></div>
+                        </div>
+                    </div>`;
+        }
+
+    function renderBug(match) {
+        if (!match) {
+            bugEl.innerHTML = "";
+            bugEl.classList.remove('visible');
+            bugEl.classList.add('hidden');
+            return;
+        }
+
+        const winnerName = (match.winner_name || '').trim();
+
+        // If match is finished and not in debug mode, hide the bug
+        if (winnerName && !debugMode) {
+            bugEl.innerHTML = "";
+            bugEl.classList.remove('visible');
+            bugEl.classList.add('hidden');
+            return;
+        }
+
+                // Determine serving flags (player2serve: '1' -> p1, '2' -> p2)
+                const p2serve = String(match.player2serve || '');
+                const p1Serving = (p2serve === '1' || p2serve === '0');
+                const p2Serving = (p2serve === '2');
+
+                bugEl.innerHTML = `
+                    <div class="bug-grid">
+                        ${buildPlayerLeftHTML(match, true)}
+                        <div class="sets">${buildPlayerSetsRowHTML(match, true)}</div>
+                        ${buildPlayerGameScoreHTML(match, true, p1Serving)}
+
+                        ${buildPlayerLeftHTML(match, false)}
+                        <div class="sets">${buildPlayerSetsRowHTML(match, false)}</div>
+                        ${buildPlayerGameScoreHTML(match, false, p2Serving)}
+                    </div>`;
+
+                bugEl.classList.remove('hidden');
+                bugEl.classList.add('visible');
+    }
+
+    // --- Animations on changes ---
+    function animateChange(key) {
+        const el = document.querySelector(`[data-key="${key}"]`);
+        if (!el) return;
+        el.classList.add('pulse');
+        setTimeout(() => el.classList.remove('pulse'), 260);
+    }
+
+    function animateServe(key) {
+        const el = document.querySelector(`[data-key="${key}"]`);
+        if (!el) return;
+        el.classList.add('serve-pulse');
+        setTimeout(() => el.classList.remove('serve-pulse'), 260);
+    }
+
+    function updateBug(newMatch) {
+        if (!newMatch) return;
+
+        // First-time render
+        if (!matchData) {
+            matchData = newMatch;
+            currentMatchId = newMatch.matchid;
+            renderBug(newMatch);
+            return;
+        }
+
+        // If match ID changed, re-render from scratch
+        if (newMatch.matchid !== matchData.matchid) {
+            matchData = newMatch;
+            currentMatchId = newMatch.matchid;
+            renderBug(newMatch);
+            return;
+        }
+
+        // Compare changes
+        const old = matchData;
+
+        // Check game scores
+        if (newMatch.game1 !== old.game1) animateChange('game_p1');
+        if (newMatch.game2 !== old.game2) animateChange('game_p2');
+
+        const newSetsPlayed = toInt(newMatch.sets_played_count) || 0;
+        for (let i = 1; i <= Math.max(newSetsPlayed, 1); i++) {
+            if (newMatch[`set${i}_p1`] !== old[`set${i}_p1`]) animateChange(`set_p1_${i}`);
+            if (newMatch[`set${i}_p2`] !== old[`set${i}_p2`]) animateChange(`set_p2_${i}`);
+        }
+
+        // Serve side changed?
+        if (toInt(newMatch.player2serve) !== toInt(old.player2serve)) {
+            animateServe('serve_p1');
+            animateServe('serve_p2');
+        }
+
+        matchData = newMatch;
+        renderBug(newMatch);
+    }
+
+    // Initial render if we have initial match_data from Flask
+    if (matchData) {
+        renderBug(matchData);
+    } else if (debugMode) {
+        // In debug mode, if no matchData yet, we just wait for WS.
+        console.log("Debug mode: waiting for WebSocket to deliver match data...");
+    }
+
+    // --- Socket.IO live updates ---
+    // Always connect directly in this preview file (each preview opens its own socket).
+    const socket = io();
+
+    socket.on("connect", () => {
+        console.log("Bug overlay connected to Socket.IO.");
+    });
+
+    socket.on("disconnect", () => {
+        console.log("Bug overlay disconnected from Socket.IO.");
+        // We do NOT hide the bug on disconnect; last known data remains.
+    });
+
+    socket.on("live_updates", (data) => {
+        if (!data || !data.live_matches) return;
+
+        const matches = data.live_matches;
+
+        let updated = null;
+
+        if (currentMatchId) {
+            updated = matches.find(m => String(m.matchid) === String(currentMatchId));
+        }
+
+        // If no currentMatchId (or match disappeared), attempt to pick one
+        if (!updated && !currentMatchId) {
+            // First preference: any live match
+            const live = matches.filter(m => {
+                const st = (m.matchstatus || '').toUpperCase();
+                return st.includes('IN PROGRESS') || st.includes('TEST');
+            });
+            if (live.length === 1) {
+                updated = live[0];
+                currentMatchId = updated.matchid;
+            }
+        }
+
+        if (!updated) return;
+
+        updateBug(updated);
+    });
+</script>
+</body>
+</html>

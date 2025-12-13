@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎾 Live Score Scraper — Help & Data Reference</title>
+
+    <style>
+        :root {
+            --background-dark: #1e1e1e;
+            --surface-dark: #2d2d2d;
+            --text-light: #f0f0f0;
+            --primary-accent: #007bff;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+            --test-color: #ffc107;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px;
+            background: var(--background-dark);
+            color: var(--text-light);
+            font-family: "Segoe UI", sans-serif;
+            line-height: 1.7;
+        }
+
+        h1, h2, h3 {
+            border-bottom: 2px solid var(--surface-dark);
+            padding-bottom: 6px;
+            margin-top: 30px;
+            color: var(--primary-accent);
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: auto;
+        }
+
+        a {
+            color: var(--test-color);
+            text-decoration: none;
+        }
+        a:hover { text-decoration: underline; }
+
+        .block {
+            background: var(--surface-dark);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        code {
+            background: #00000055;
+            padding: 3px 5px;
+            border-radius: 4px;
+            font-size: 0.95em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        table th, table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #444;
+        }
+        table th { background: #333; }
+
+        /* Diagram Styles */
+        .diagram {
+            background: #111;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            border: 1px solid #444;
+        }
+        .diagram-title {
+            text-align: center;
+            color: var(--test-color);
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .diagram-box {
+            background: #222;
+            border: 1px solid #555;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            margin: 8px 0;
+        }
+        .arrow {
+            text-align: center;
+            font-size: 22px;
+            margin: 5px 0;
+            color: var(--primary-accent);
+        }
+
+        /* Flex flow diagram */
+        .flow-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .flow-item {
+            flex: 1;
+            padding: 15px;
+            background: #222;
+            border: 1px solid #444;
+            text-align: center;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <h1>🎾 Live Score Scraper — Help & Data Reference</h1>
+
+    <p>This guide explains all match variables, how live data flows, and includes diagrams for reference.</p>
+
+    <p><a href="/">⬅ Back to Dashboard</a></p>
+
+    <!-- MAIN DATA FLOW DIAGRAM -->
+    <h2>📡 Data Flow Overview</h2>
+
+    <div class="diagram">
+        <div class="diagram-title">Tennis Score Data Flow</div>
+
+        <div class="diagram-box">🎾 TennisTicker XML Feed</div>
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">🐍 Python Scraper (server.py)<br>
+            - Fetch XML<br>
+            - Parse names, sets, tie-breaks<br>
+            - Detect changes<br>
+            - Cache in SQLite</div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">🗄 SQLite Match Cache<br>(casparcg_match_cache.db)</div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">🔌 Flask-SocketIO<br>Sends live_updates events → Browser</div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">🖥 Dashboard Frontend<br>(index.html)<br>Updates cards in real time</div>
+    </div>
+
+
+
+    <!-- LIVE MATCH -->
+    <h2>🔴 LIVE Match Data Structure</h2>
+
+    <div class="diagram">
+        <div class="diagram-title">LIVE Match Breakdown</div>
+
+        <div class="flow-row">
+            <div class="flow-item">Player 1<br><code>player1_surname</code><br><code>player1_country</code></div>
+            <div class="flow-item">Player 2<br><code>player2_surname</code><br><code>player2_country</code></div>
+        </div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="flow-row">
+            <div class="flow-item">
+                Current Game<br><code>game1</code>
+            </div>
+            <div class="flow-item">
+                Current Game<br><code>game2</code>
+            </div>
+        </div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">
+            Set Scores:<br>
+            <code>set1_p1, set1_p2 … setN_p1, setN_p2</code><br>
+            Tie-break: <code>setN_tb</code>
+        </div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">
+            Server Indicator → <code>player2serve</code><br>
+            0 = Player 1 serving<br>
+            1 = Player 2 serving
+        </div>
+    </div>
+
+
+    <div class="block">
+        <table>
+            <tr><th>Field</th><th>Description</th></tr>
+
+            <tr><td><code>matchid</code></td><td>Unique ID</td></tr>
+            <tr><td><code>matchstatus</code></td><td>Should contain “IN PROGRESS”</td></tr>
+            <tr><td><code>game1</code>, <code>game2</code></td><td>Current point score</td></tr>
+            <tr><td><code>player2serve</code></td><td>Serving indicator</td></tr>
+            <tr><td><code>setN_p1</code></td><td>Player 1 set score</td></tr>
+            <tr><td><code>setN_p2</code></td><td>Player 2 set score</td></tr>
+            <tr><td><code>setN_tb</code></td><td>Tie-break score</td></tr>
+        </table>
+
+        <p>Example LIVE JSON:</p>
+        <pre><code>{
+  "matchid": "123",
+  "player1": "Ben GUSIC",
+  "player2": "Tom WILLIAMS",
+  "game1": "40",
+  "game2": "AD",
+  "player2serve": 1,
+  "set1_p1": 6,
+  "set1_p2": 4,
+  "set2_p1": 3,
+  "set2_p2": 5,
+  "sets_played_count": 2
+}</code></pre>
+    </div>
+
+
+
+    <!-- COMPLETED MATCH -->
+    <h2>✅ Completed Match Data Structure</h2>
+
+    <div class="diagram">
+        <div class="diagram-title">COMPLETED Match Breakdown</div>
+
+        <div class="diagram-box">
+            Winner:<br>
+            <code>winner</code> (1 or 2)<br>
+            <code>winner_name</code><br>
+        </div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">
+            Final Set Scores:<br>
+            <code>set1_p1, set1_p2, …</code><br>
+            Tie-break included if present
+        </div>
+
+        <div class="arrow">⬇</div>
+
+        <div class="diagram-box">
+            Live game scores are hidden in UI
+        </div>
+    </div>
+
+    <div class="block">
+        <p>Example Completed Match JSON:</p>
+
+<pre><code>{
+  "matchid": "123",
+  "winner": "1",
+  "winner_name": "Ben Gusic",
+  "set1_p1": 6,
+  "set1_p2": 4,
+  "set2_p1": 7,
+  "set2_p2": 6,
+  "set2_tb": "5",
+  "matchstatus": "COMPLETED"
+}</code></pre>
+    </div>
+
+</div>
+
+</body>
+</html>
