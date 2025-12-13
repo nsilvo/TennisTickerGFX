@@ -152,7 +152,14 @@ class XMLCacheManager:
         def ensure_column(name, col_type, default_clause=""):
             if name not in existing_cols:
                 print(f"Altering table 'matches' to add missing column: {name}")
-                cursor.execute(f"ALTER TABLE matches ADD COLUMN {name} {col_type} {default_clause};")
+                try:
+                    cursor.execute(f"ALTER TABLE matches ADD COLUMN {name} {col_type} {default_clause};")
+                except Exception as e:
+                    print(f"Column {name} already exists or error: {e}. Rolling back and continuing...")
+                    try:
+                        self.conn.rollback()
+                    except Exception:
+                        pass
 
         # Ensure schedtime and is_plan exist even if DB was created earlier
         ensure_column("schedtime", "TEXT", "")
