@@ -22,5 +22,5 @@ COPY . /app
 # Expose Flask port
 EXPOSE 5000
 
-# Use gevent.pywsgi with WebSocket support
-CMD ["python", "-c", "from gevent import pywsgi; from geventwebsocket.handler import WebSocketHandler; from server import app; server = pywsgi.WSGIServer(('0.0.0.0', 5000), app, handler_class=WebSocketHandler); server.serve_forever()"]
+# Run server.py which starts the scraper thread and SocketIO server
+CMD ["python", "server.py"]
