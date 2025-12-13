@@ -326,6 +326,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     // We track current match ID and data
     let matchData = initialMatchData;
     let currentMatchId = matchData ? matchData.matchid : null;
+    let forceHidden = false;
 
     const bugEl = document.getElementById('bug');
 
@@ -437,25 +438,65 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             return;
         }
 
-                // Determine serving flags (player2serve: '1' -> p1, '2' -> p2)
-                const p2serve = String(match.player2serve || '');
-                const p1Serving = (p2serve === '1' || p2serve === '0');
-                const p2Serving = (p2serve === '2');
+        // Determine serving flags (player2serve: '1' -> p1, '2' -> p2)
+        const p2serve = String(match.player2serve || '');
+        const p1Serving = (p2serve === '1' || p2serve === '0');
+        const p2Serving = (p2serve === '2');
 
-                bugEl.innerHTML = `
-                    <div class="bug-grid">
-                        ${buildPlayerLeftHTML(match, true)}
-                        <div class="sets">${buildPlayerSetsRowHTML(match, true)}</div>
-                        ${buildPlayerGameScoreHTML(match, true, p1Serving)}
+        bugEl.innerHTML = `
+            <div class="bug-grid">
+                ${buildPlayerLeftHTML(match, true)}
+                <div class="sets">${buildPlayerSetsRowHTML(match, true)}</div>
+                ${buildPlayerGameScoreHTML(match, true, p1Serving)}
 
-                        ${buildPlayerLeftHTML(match, false)}
-                        <div class="sets">${buildPlayerSetsRowHTML(match, false)}</div>
-                        ${buildPlayerGameScoreHTML(match, false, p2Serving)}
-                    </div>`;
+                ${buildPlayerLeftHTML(match, false)}
+                <div class="sets">${buildPlayerSetsRowHTML(match, false)}</div>
+                ${buildPlayerGameScoreHTML(match, false, p2Serving)}
+            </div>`;
 
-                bugEl.classList.remove('hidden');
-                bugEl.classList.add('visible');
+        if (forceHidden) {
+            bugEl.classList.remove('visible');
+            bugEl.classList.add('hidden');
+            return;
+        }
+
+        bugEl.classList.remove('hidden');
+        bugEl.classList.add('visible');
     }
+
+    // Playout control hooks for CasparCG and vMix
+    function playIn() {
+        forceHidden = false;
+        if (matchData) renderBug(matchData);
+    }
+
+    function playOut() {
+        forceHidden = true;
+        bugEl.classList.remove('visible');
+        bugEl.classList.add('hidden');
+    }
+
+    window.play = playIn;
+    window.stop = playOut;
+    window.playIn = playIn;
+    window.playOut = playOut;
+
+    function handleExternalCommand(cmd) {
+        const c = (cmd || '').toString().toLowerCase();
+        if (!c) return;
+        if (c === 'play' || c === 'playin' || c === 'in' || c === 'show') playIn();
+        if (c === 'stop' || c === 'playout' || c === 'out' || c === 'hide') playOut();
+    }
+
+    window.addEventListener('message', (event) => {
+        if (!event) return;
+        const payload = event.data;
+        if (typeof payload === 'string') {
+            handleExternalCommand(payload);
+        } else if (payload && typeof payload === 'object') {
+            handleExternalCommand(payload.command || payload.cmd);
+        }
+    });
 
     // --- Animations on changes ---
     function animateChange(key) {
