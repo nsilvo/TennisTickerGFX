@@ -1,0 +1,288 @@
+<!--
+File: templates/config.html
+Description: Runtime configuration page for changing active tournament ID.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration - Tournament Settings</title>
+    <style>
+        :root {
+            --background-dark: #101017;
+            --surface-dark: #181821;
+            --surface-elevated: #222230;
+            --text-light: #f5f5f7;
+            --muted-text: #a0a0b0;
+            --primary-accent: #0d6efd;
+            --success-color: #3ddc84;
+            --error-color: #ff4b5c;
+            --test-color: #ffc107;
+            --border-soft: #333344;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            padding: 32px 16px 48px;
+            background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+            color: var(--text-light);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1, h2, h3 {
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin: 0 0 12px;
+        }
+
+        h1 { font-size: 1.5rem; }
+
+        .nav-bar {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: linear-gradient(
+                180deg,
+                rgba(10, 10, 17, 0.98) 0%,
+                rgba(10, 10, 17, 0.95) 50%,
+                rgba(10, 10, 17, 0) 100%
+            );
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            margin: -32px -16px 32px -16px;
+            padding: 12px 16px;
+        }
+
+        .nav-content {
+            max-width: 1280px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .nav-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted-text);
+            margin: 0;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .nav-links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            text-decoration: none;
+            color: var(--muted-text);
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-light);
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .nav-links a.active {
+            color: var(--test-color);
+            background: rgba(255, 193, 7, 0.16);
+            border-color: rgba(255, 193, 7, 0.5);
+        }
+
+        .card {
+            background: rgba(12, 12, 20, 0.86);
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .meta-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+
+        .meta-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            color: var(--muted-text);
+        }
+
+        .meta-value {
+            margin-top: 2px;
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text-light);
+        }
+
+        label {
+            display: block;
+            font-size: 0.82rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted-text);
+            margin-bottom: 8px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.35);
+            color: var(--text-light);
+            border: 1px solid var(--border-soft);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 1rem;
+            margin-bottom: 14px;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
+        }
+
+        .btn {
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 193, 7, 0.7);
+            background: rgba(255, 193, 7, 0.16);
+            color: var(--test-color);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background: rgba(255, 193, 7, 0.3);
+        }
+
+        .notice {
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .notice.success {
+            background: rgba(61, 220, 132, 0.16);
+            border: 1px solid rgba(61, 220, 132, 0.45);
+            color: var(--success-color);
+        }
+
+        .notice.error {
+            background: rgba(255, 75, 92, 0.16);
+            border: 1px solid rgba(255, 75, 92, 0.45);
+            color: var(--error-color);
+        }
+
+        .hint {
+            margin-top: 10px;
+            font-size: 0.84rem;
+            color: var(--muted-text);
+        }
+    </style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/live_matches">🎬 Live Matches</a></li>
+            <li><a href="/caspar/scoreboard/">📺 Scoreboard</a></li>
+            <li><a href="/results">📋 Results</a></li>
+            <li><a href="/caspar/bug/">🎥 Caspar Overlay</a></li>
+            <li><a href="/config" class="active">⚙ Config</a></li>
+            <li><a href="/help">❓ Help</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <h1>⚙ Tournament Configuration</h1>
+
+    <div class="card">
+        {% if message %}
+        <div class="notice success">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+        <div class="notice error">{{ error }}</div>
+        {% endif %}
+
+        <div class="meta-grid">
+            <div class="meta-item">
+                <div class="meta-label">Current Tournament ID</div>
+                <div class="meta-value">{{ tournament_id }}</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Scrape Interval</div>
+                <div class="meta-value">{{ scrape_interval }}s</div>
+            </div>
+        </div>
+
+        <form method="post" action="/config">
+            <label for="tournament_id">New Tournament ID (numbers only)</label>
+            <input
+                id="tournament_id"
+                name="tournament_id"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]+"
+                placeholder="e.g. 7140"
+                required
+                value="{{ tournament_id }}"
+            >
+            <button class="btn" type="submit">Save Tournament ID</button>
+        </form>
+
+        <p class="hint">
+            This updates the active feed immediately for the running scraper. Existing cached rows will naturally refresh as new data arrives.
+        </p>
+    </div>
+</div>
+</body>
+</html>

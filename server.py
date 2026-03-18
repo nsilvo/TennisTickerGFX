@@ -749,6 +749,21 @@ def resolve_match(matchid, auto_single_live=False, fallback_any=False):
 # Flask API Endpoints
 # ====================================================================
 
+def update_tournament_id(new_tour_id):
+    """Validate and update the tracked tournament id in a thread-safe way."""
+    global CURRENT_TOURNAMENT_ID
+
+    candidate = (new_tour_id or "").strip()
+    if not candidate.isdigit():
+        return False, "Tournament ID must be a numeric value.", 400
+
+    with state_lock:
+        if candidate != CURRENT_TOURNAMENT_ID:
+            print(f"\n*** TOURNAMENT ID CHANGED: {CURRENT_TOURNAMENT_ID} -> {candidate} ***\n")
+            CURRENT_TOURNAMENT_ID = candidate
+
+    return True, f"Scraper is now tracking Tournament ID: {candidate}", 200
+
 @app.route('/', methods=['GET'])
 def index():
     """API Index: Renders the static HTML page with SocketIO connection for live updates."""
@@ -796,6 +811,37 @@ def help_page():
     return render_template("help.html")
 
 
+@app.route('/config', methods=['GET', 'POST'])
+def config_page():
+    """Configuration page for runtime settings such as tournament id."""
+    message = None
+    error = None
+
+    if request.method == 'POST':
+        new_tour_id = request.form.get('tournament_id', '').strip()
+        ok, msg, _status = update_tournament_id(new_tour_id)
+        if ok:
+            message = msg
+        else:
+            error = msg
+
+    with state_lock:
+        tour_id = CURRENT_TOURNAMENT_ID
+        interval = SCRAPE_INTERVAL
+
+    response = make_response(render_template(
+        'config.html',
+        tournament_id=tour_id,
+        scrape_interval=interval,
+        message=message,
+        error=error
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
 @app.route('/api/v1/scores', methods=['GET'])
 @app.route('/api/v1/scores/court/<court_number>', methods=['GET'])
 def get_all_scores(court_number=None):
@@ -838,20 +884,14 @@ def get_all_scores(court_number=None):
 @app.route('/api/v1/tourid/<new_tour_id>', methods=['POST', 'GET'])
 def set_tournament_id(new_tour_id):
     """API endpoint to change the CURRENT_TOURNAMENT_ID that the scraper tracks."""
-    global CURRENT_TOURNAMENT_ID
-
-    if not new_tour_id.isdigit():
-        return jsonify({"error": "Tournament ID must be a numeric value."}), 400
-
-    with state_lock:
-        if new_tour_id != CURRENT_TOURNAMENT_ID:
-            print(f"\n*** TOURNAMENT ID CHANGED: {CURRENT_TOURNAMENT_ID} -> {new_tour_id} ***\n")
-            CURRENT_TOURNAMENT_ID = new_tour_id
+    ok, msg, status_code = update_tournament_id(new_tour_id)
+    if not ok:
+        return jsonify({"error": msg}), status_code
 
     return jsonify({
         "status": "success",
-        "message": f"Scraper is now tracking Tournament ID: {new_tour_id}",
-        "new_tournament_id": new_tour_id
+        "message": msg,
+        "new_tournament_id": str(new_tour_id).strip()
     })
 
 
