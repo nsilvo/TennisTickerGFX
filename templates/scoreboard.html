@@ -175,10 +175,6 @@ body.browser-preview {
 }
 
 /* Debug */
-{% if debug_mode %}
-#scoreboard-safe { outline: 2px dashed red; }
-.scoreboard-bar { outline: 1px dashed yellow; }
-
 #debug-panel {
     position: absolute;
     top: 180px;
@@ -193,8 +189,12 @@ body.browser-preview {
     font-size: 15px;
     border-radius: 6px;
     pointer-events: none;
+    display: none;
 }
-{% endif %}
+
+body.debug-mode #scoreboard-safe { outline: 2px dashed red; }
+body.debug-mode .scoreboard-bar { outline: 1px dashed yellow; }
+body.debug-mode #debug-panel { display: block; }
 
 .swipe {
     animation: swipeAnim 0.35s ease;
@@ -215,16 +215,14 @@ body.browser-preview {
 </style>
 </head>
 
-<body>
+<body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}">
 <div id="canvas">
-    {% if debug_mode %}
     <div id="debug-panel">
         <b>🐞 SCOREBOARD DEBUG</b><br>
         Match ID: <span id="dbg-matchid">{{ match_data.matchid if match_data else "NONE" }}</span>
         <hr>
         <pre id="dbg-socket">{waiting...}</pre>
     </div>
-    {% endif %}
 
     <div id="scoreboard-safe">
         <div id="scoreboard-bar" class="scoreboard-bar">
@@ -233,6 +231,8 @@ body.browser-preview {
         </div>
     </div>
 </div>
+
+<script id="scoreboard-initial-data" type="application/json">{{ (match_data or {})|tojson }}</script>
 
 <script>
 (function(){
@@ -258,7 +258,18 @@ const isoMap = {
 };
 function toISO2(c){ return isoMap[(c||"").toUpperCase()] || c.toLowerCase().slice(0,2); }
 
-let matchData = {{ match_data|tojson if match_data else "{}" }};
+const debugMode = document.body.dataset.debugMode === "1";
+let matchData = {};
+const initialDataNode = document.getElementById("scoreboard-initial-data");
+if (initialDataNode && initialDataNode.textContent) {
+    try {
+        matchData = JSON.parse(initialDataNode.textContent);
+    } catch (e) {
+        console.error("Failed to parse initial scoreboard JSON payload.", e);
+        matchData = {};
+    }
+}
+
 if (Object.keys(matchData).length > 0) {
     matchData = {
         ...matchData,
@@ -376,10 +387,10 @@ function updateScoreboard(newRaw){
 const socket = io(window.location.origin);
 
 socket.on("live_updates", data => {
-    {% if debug_mode %}
-    const dbg = document.getElementById("dbg-socket");
-    if(dbg) dbg.textContent = JSON.stringify(data, null, 2);
-    {% endif %}
+    if (debugMode) {
+        const dbg = document.getElementById("dbg-socket");
+        if(dbg) dbg.textContent = JSON.stringify(data, null, 2);
+    }
 
     if(!data.live_matches) return;
 

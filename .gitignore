@@ -3,23 +3,75 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py[cod]
+*$py.class
+
+# Python build/test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+site/
+pip-wheel-metadata/
+*.egg
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # Virtual environments
 .venv/
 venv/
 ENV/
+env/
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # VS Code
 .vscode/
 
+# IDE/system files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
 # Logs
 *.log
+logs/
 
 # Byte-compiled / packages
-*.egg-info/
+# (covered above)
 
 # Docker
 *.pid
+docker-compose.override.yml
 
-# Local data (uncomment if you persist DB locally)
-# data/
+# Local runtime data
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Runtime/cache outputs
+tmp/
+temp/
+.cache/

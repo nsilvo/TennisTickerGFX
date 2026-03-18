@@ -46,6 +46,46 @@ docker compose exec postgres psql -U tennisxml -d tennisxml
 
 - `FLASK_ENV`: `production` by default in compose
 - `TZ`: timezone (defaults to UTC)
+- `PORT`: HTTP port (defaults to `5000`)
+- `TOURNAMENT_ID`: startup tournament id (defaults to `7140`)
+- `SCRAPE_INTERVAL`: startup scrape interval in seconds (defaults to `5`)
+- `ENABLE_SCRAPER`: start background XML polling loop (`true` by default)
+- `SQLITE_DB_PATH`: sqlite filename/path when not using `DATABASE_URL`
+
+## AWS App Runner
+
+This repo is prepared for App Runner in two common modes:
+
+- Source-based deploy via `apprunner.yaml`
+- Container deploy via `Dockerfile`
+
+### Source-based deploy
+
+1. In AWS App Runner, create service from source repository.
+2. Runtime config file: use `apprunner.yaml` from project root.
+3. Set environment variables in App Runner:
+	- `PORT=5000`
+	- `TZ=UTC`
+	- `DATABASE_URL=postgresql://...` (recommended for production)
+	- Optional: `TOURNAMENT_ID`, `SCRAPE_INTERVAL`, `ENABLE_SCRAPER`
+4. Health check path: `/health`
+
+### Container deploy
+
+1. Build and push this image to ECR.
+2. Create App Runner service from ECR image.
+3. Container port: `5000` (or set `PORT` and match App Runner port setting).
+4. Health check path: `/health`
+
+### Scaling note
+
+The app runs an internal scraper thread per instance. If App Runner scales to multiple instances,
+each instance will poll and process XML.
+
+For predictable behavior, one of these is recommended:
+
+- Keep App Runner min/max size at `1` for this service, or
+- Set `ENABLE_SCRAPER=false` on read-only web instances and run scraper in a dedicated single worker/service.
 
 ## Development (without Docker)
 

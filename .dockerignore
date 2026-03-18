@@ -1,0 +1,39 @@
+# Git
+.git/
+.gitignore
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage*
+build/
+dist/
+
+# Local environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local runtime data
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+tmp/
+temp/
+.cache/

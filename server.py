@@ -24,10 +24,12 @@ from flask_socketio import SocketIO, emit
 # --- Configuration ---
 XML_BASE_URL = "https://scores.tennisticker.de/scoreboard/livescores.aspx?"
 QUERY_STRING = "userid=EFBBCDD3&tournid={tournid}&contract=ONSIDEPROD"
-DB_NAME = "casparcg_match_cache.db"
+DB_NAME = os.getenv("SQLITE_DB_PATH", "casparcg_match_cache.db")
 
-SCRAPE_INTERVAL = 5
-CURRENT_TOURNAMENT_ID = '7140'
+SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "5"))
+CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '7140')
+ENABLE_SCRAPER = os.getenv("ENABLE_SCRAPER", "true").strip().lower() in ("1", "true", "yes", "on")
+SERVER_PORT = int(os.getenv("PORT", "5000"))
 
 MAX_SETS = 11
 # --- End Configuration ---
@@ -61,8 +63,17 @@ class XMLCacheManager:
         db_url = os.getenv("DATABASE_URL", "")
         if db_url:
             try:
-                import psycopg2
-                return psycopg2.connect(db_url)
+                import importlib
+
+                # Prefer psycopg v3 when available; fall back to psycopg2.
+                for module_name in ("psycopg", "psycopg2"):
+                    try:
+                        pg_module = importlib.import_module(module_name)
+                        return pg_module.connect(db_url)
+                    except Exception:
+                        continue
+
+                raise RuntimeError("No compatible PostgreSQL driver found (psycopg or psycopg2).")
             except Exception as e:
                 print(f"Failed to connect to Postgres via DATABASE_URL: {e}. Falling back to SQLite.")
         # SQLite fallback
@@ -811,6 +822,12 @@ def help_page():
     return render_template("help.html")
 
 
+@app.route('/health')
+def health_check():
+    """Lightweight health endpoint for load balancers and App Runner health checks."""
+    return jsonify({"status": "ok"}), 200
+
+
 @app.route('/config', methods=['GET', 'POST'])
 def config_page():
     """Configuration page for runtime settings such as tournament id."""
@@ -1027,17 +1044,20 @@ def test_disconnect():
 # ====================================================================
 def main():
     """Starts the scraper thread and the Flask web server using SocketIO."""
-    # 1. Start the continuous scraping loop in a separate thread
-    scraper_thread = Thread(target=continuous_scraper_loop, daemon=True)
-    scraper_thread.start()
-    print("Background scraper started in a separate thread.")
+    # 1. Start background scraper loop unless explicitly disabled
+    if ENABLE_SCRAPER:
+        scraper_thread = Thread(target=continuous_scraper_loop, daemon=True)
+        scraper_thread.start()
+        print("Background scraper started in a separate thread.")
+    else:
+        print("Background scraper disabled (ENABLE_SCRAPER=false).")
 
     # 2. Start the Flask web server with SocketIO
     print("\n--- Starting Flask API Server with SocketIO ---")
-    print(f"   Web/Help Address: http://0.0.0.0:5000/")
+    print(f"   Web/Help Address: http://0.0.0.0:{SERVER_PORT}/")
 
     # With eventlet as the async_mode, this is now a production-capable server.
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    socketio.run(app, host='0.0.0.0', port=SERVER_PORT, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":

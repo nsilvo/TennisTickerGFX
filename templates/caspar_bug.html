@@ -43,12 +43,12 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             width: 100%;
             height: 100%;
             overflow: hidden;
-            {% if debug_mode %}
-            background: #000000;   /* Black background when debug=1 so you can see it in a browser */
-            {% else %}
             background: transparent;  /* For CasparCG / vMix alpha */
-            {% endif %}
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        body.debug-mode {
+            background: #000000;
         }
 
         #canvas {
@@ -291,14 +291,16 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             margin-top: 10px;
             font-size: 0.8rem;
             color: #ccc;
-            {% if not debug_mode %}
             display: none;
-            {% endif %}
+        }
+
+        body.debug-mode #debug-info {
+            display: block;
         }
     </style>
 </head>
 
-<body>
+<body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}">
 <div id="canvas">
     <div id="safe-container">
         <div id="bug" class="hidden">
@@ -318,10 +320,21 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     </div>
 </div>
 
+<script id="bug-initial-data" type="application/json">{{ (match_data if match_data is not none else none)|tojson }}</script>
+
 <script>
     // --- Template variables from Flask ---
-    const initialMatchData = {{ match_data|tojson if match_data is not none else 'null' }};
-    const debugMode = {{ 'true' if debug_mode else 'false' }};
+    const debugMode = document.body.dataset.debugMode === '1';
+    let initialMatchData = null;
+    const initialDataNode = document.getElementById('bug-initial-data');
+    if (initialDataNode && initialDataNode.textContent) {
+        try {
+            initialMatchData = JSON.parse(initialDataNode.textContent);
+        } catch (e) {
+            console.error('Failed to parse initial bug JSON payload.', e);
+            initialMatchData = null;
+        }
+    }
 
     // We track current match ID and data
     let matchData = initialMatchData;

@@ -308,6 +308,194 @@ Bug:        /caspar/bug/?matchid=12345
         <p><strong>Tip:</strong> Use the dashboard card buttons (“Bug” or “Scoreboard”) to open the overlay with matchid pre-filled.</p>
     </div>
 
+    <h2>🎛 vMix Serve Script Guide</h2>
+    <div class="block">
+        <p>
+            The vMix script in this repo (file: <code>vmix/scripting</code>) automatically toggles serve indicators in your
+            scoreboard title based on live API data.
+        </p>
+
+        <p><strong>What you need in vMix first</strong></p>
+        <ul>
+            <li>A title input named <code>SCOREBOARD</code> (or change <code>SCOREBOARD</code> variable in script).</li>
+            <li>A text field in that title called <code>MATCHID.Text</code> containing the current match ID.</li>
+            <li>Two image layers named <code>SERVE_1.Source</code> and <code>SERVE_2.Source</code>.</li>
+        </ul>
+
+        <p><strong>How to install and run in vMix</strong></p>
+        <ol>
+            <li>Open <strong>vMix</strong> and go to <strong>Settings</strong> → <strong>Scripting</strong>.</li>
+            <li>Create a new script and paste the contents of <code>vmix/scripting</code>.</li>
+            <li>Set <code>SCOREBOARD</code> to your title input name if different from default.</li>
+            <li>Set <code>API_BASE_URL</code> to your server, for example <code>https://scores.nkpa.co.uk/api/v1/match</code> or your local endpoint.</li>
+            <li>Save and click <strong>Start</strong> for the script.</li>
+            <li>Update <code>MATCHID.Text</code> on the scoreboard input to the match you want to track.</li>
+        </ol>
+
+        <p><strong>What the script is doing</strong></p>
+        <ul>
+            <li>Runs an infinite loop and polls every <code>500ms</code>.</li>
+            <li>Reads <code>MATCHID.Text</code> from the <code>SCOREBOARD</code> title input.</li>
+            <li>Calls <code>/api/v1/match/&lt;matchid&gt;</code> to get match JSON.</li>
+            <li>Extracts <code>player2serve</code> from the JSON response.</li>
+            <li>If value is <code>1</code>: shows <code>SERVE_1.Source</code>, hides <code>SERVE_2.Source</code>.</li>
+            <li>If value is <code>2</code>: hides <code>SERVE_1.Source</code>, shows <code>SERVE_2.Source</code>.</li>
+            <li>For missing/invalid value: hides both serve indicators.</li>
+            <li>Only performs visibility updates when the serve value changes, to reduce unnecessary commands.</li>
+        </ul>
+
+        <p><strong>Troubleshooting</strong></p>
+        <ul>
+            <li>If console shows <code>Scoreboard input not found</code>, check the input name matches <code>SCOREBOARD</code>.</li>
+            <li>If console shows <code>Match ID not found</code>, ensure <code>MATCHID.Text</code> exists and is populated.</li>
+            <li>If indicators never change, verify API reachability by opening <code>/api/v1/match/&lt;matchid&gt;</code> in a browser and checking <code>player2serve</code>.</li>
+        </ul>
+
+        <p><strong>Quick copy: vMix script</strong></p>
+        <p>Use this when you need to paste directly into <strong>Settings</strong> -> <strong>Scripting</strong> in vMix.</p>
+        <button id="vmix-copy-btn" class="btn" type="button">Copy vMix Script</button>
+        <span id="vmix-copy-status" style="margin-left:8px; font-size:0.85rem; color: var(--muted-text);"></span>
+        <textarea
+            id="vmix-script-content"
+            readonly
+            style="width:100%; margin-top:10px; min-height:360px; padding:10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(0,0,0,0.4); color:var(--text-light); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:0.85rem;"
+        >' ============================================================
+' Serve Indicator Automation Script for vMix
+' ============================================================
+' Copyright (c) 2025 Nathan Silveston. All rights reserved.
+'
+' Description: Automated serve indicator control that reads
+'              player2serve data from the tennis score API
+'              hosted at https://scores.nkpa.co.uk
+'              and displays the appropriate serve bug.
+'              MatchID is read from a text field in the
+'              specified SCOREBOARD title input.
+'
+' Author: Nathan Silveston (nathan@nkpa.co.uk)
+' Created: December 2025
+' Version: 1.0
+'
+' Usage: Add this script to vMix and set SCOREBOARD and
+'        API_BASE_URL variables to match your setup.
+' ============================================================
+
+Dim SCOREBOARD As String = "SCOREBOARD"
+Dim API_BASE_URL As String = "https://scores.nkpa.co.uk/api/v1/match"
+Dim lastServeValue As String = ""
+Dim currentServeStatus As String = "unknown"
+
+Console.WriteLine("========== SCRIPT INITIALIZED ==========")
+Console.WriteLine("[INIT] Serve indicator script starting...")
+
+' Check initial state of serve sources
+Try
+    Dim scoreboardInput = Input.Find(SCOREBOARD)
+    If scoreboardInput IsNot Nothing Then
+        Console.WriteLine("[INIT] SCOREBOARD input found")
+        Console.WriteLine("[INIT] Checking initial visibility states...")
+        Console.WriteLine("[INIT] SERVE_1.Source - Initial state: checking...")
+        Console.WriteLine("[INIT] SERVE_2.Source - Initial state: checking...")
+    Else
+        Console.WriteLine("[INIT] WARNING: SCOREBOARD input not found at startup")
+    End If
+Catch ex As Exception
+    Console.WriteLine("[INIT] Error during startup check: " & ex.Message)
+End Try
+
+Console.WriteLine("[INIT] Script ready and monitoring for changes")
+Console.WriteLine("========================================")
+
+While True
+    System.Threading.Thread.Sleep(500)
+    Try
+        ' Get the scoreboard input to read the match ID
+        Dim scoreboardInput = Input.Find(SCOREBOARD)
+
+        If scoreboardInput Is Nothing Then
+            Console.WriteLine("Scoreboard input not found")
+        Else
+            ' Read the match ID from the text field
+            Dim matchId As String = scoreboardInput.Text("MATCHID.Text")
+
+            If String.IsNullOrEmpty(matchId) Then
+                Console.WriteLine("Match ID not found in scoreboard")
+            Else
+                ' Fetch the match data from the API using WebRequest
+                Dim url As String = API_BASE_URL & "/" & matchId
+                Dim client = System.Net.WebRequest.Create(url)
+                Dim response = client.GetResponse()
+
+                If response IsNot Nothing Then
+                    Dim sr As System.IO.StreamReader = New System.IO.StreamReader(CType(response.GetResponseStream(), System.IO.Stream))
+                    Dim jsonContent As String = sr.ReadToEnd()
+                    sr.Close()
+
+                    ' Parse player2serve from JSON string manually
+                    Dim serveValue As String = ""
+                    Dim startIndex As Integer = jsonContent.IndexOf("""player2serve""")
+
+                    If startIndex > -1 Then
+                        startIndex = jsonContent.IndexOf(":", startIndex) + 1
+                        Dim endIndex As Integer = jsonContent.IndexOf(",", startIndex)
+                        If endIndex = -1 Then
+                            endIndex = jsonContent.IndexOf("}", startIndex)
+                        End If
+                        serveValue = jsonContent.Substring(startIndex, endIndex - startIndex).Trim()
+                        serveValue = serveValue.Replace("""", "").Trim()
+                    End If
+
+                    ' Only log and update if serve value changed
+                    If serveValue <> lastServeValue Then
+                        Console.WriteLine("[CHANGE] Serve value changed from '" & lastServeValue & "' to '" & serveValue & "'")
+                        lastServeValue = serveValue
+
+                        If serveValue = "1" Then
+                            ' Player 1 (TOP) is serving
+                            Console.WriteLine("[ACTION] Player 1 serving detected")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_1.Source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: VISIBLE")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            currentServeStatus = "Player 1"
+                        ElseIf serveValue = "2" Then
+                            ' Player 2 (BOTTOM) is serving
+                            Console.WriteLine("[ACTION] Player 2 serving detected")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_2.Source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: VISIBLE")
+                            currentServeStatus = "Player 2"
+                        Else
+                            ' No serve data - hide both
+                            Console.WriteLine("[ACTION] No serve data or invalid value")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
+                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
+                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            currentServeStatus = "None"
+                        End If
+                        Console.WriteLine("[UPDATE] Current status now: " & currentServeStatus)
+                    End If
+
+                    response.Close()
+                Else
+                    Console.WriteLine("Error fetching match data")
+                End If
+            End If
+        End If
+
+    Catch ex As Exception
+        Console.WriteLine("Error: " & ex.Message)
+    End Try
+End While</textarea>
+    </div>
+
     <h2>🧾 Example Match JSON</h2>
     <div class="block">
 <pre><code>{
@@ -375,6 +563,24 @@ Bug:        /caspar/bug/?matchid=12345
             output.textContent = `Request failed: ${err}`;
         }
     });
+
+    // vMix script copy helper
+    const vmixCopyBtn = document.getElementById('vmix-copy-btn');
+    const vmixScriptContent = document.getElementById('vmix-script-content');
+    const vmixCopyStatus = document.getElementById('vmix-copy-status');
+
+    if (vmixCopyBtn && vmixScriptContent && vmixCopyStatus) {
+        vmixCopyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(vmixScriptContent.value);
+                vmixCopyStatus.textContent = 'Script copied to clipboard.';
+            } catch (err) {
+                vmixScriptContent.focus();
+                vmixScriptContent.select();
+                vmixCopyStatus.textContent = 'Clipboard blocked by browser. Script selected, press Ctrl+C.';
+            }
+        });
+    }
 
     // Set active nav link
     document.addEventListener('DOMContentLoaded', function() {
