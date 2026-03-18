@@ -22,18 +22,29 @@ The app listens on port 5000. Visit `http://localhost:5000`.
 
 ### With PostgreSQL (production)
 
-The compose file includes a `postgres` service. The app receives `DATABASE_URL=postgresql://tennisxml:tennisxml@postgres:5432/tennisxml`.
+The compose file includes an optional `postgres` service (profile: `local-db`).
 
-Start both services:
+- If you use external Postgres (RDS/Aurora), set `DATABASE_URL` in your shell/env and run only `app`.
+- If you want local Postgres in compose, enable profile `local-db`.
+
+Start app with local Postgres:
 
 ```bash
-docker compose up --build -d
+docker compose --profile local-db up --build -d
 ```
 
 Persisted data lives in the `postgres-data` volume. To inspect:
 
 ```bash
 docker compose exec postgres psql -U tennisxml -d tennisxml
+```
+
+Start app with external Postgres (or SQLite fallback):
+
+```bash
+# Example with external DB
+export DATABASE_URL=postgresql://user:pass@host:5432/db
+docker compose up --build -d app
 ```
 
 ## Runtime
@@ -118,3 +129,47 @@ The script copies rows from `matches` to Postgres, creating tables if missing.
 - If you need RTMP input, convert it to HLS (.m3u8) with a media server (nginx-rtmp) or FFmpeg, then embed the HLS URL in the template.
 - For production behind a reverse proxy, enable `proxy_set_header Upgrade` and `Connection` headers to support WebSocket upgrades.
  - For database, SQLite is fine for dev; PostgreSQL is provided via compose for production.
+
+## AWS EC2 update flow (low-memory friendly)
+
+If `docker compose up -d --build` causes your EC2 host to become unstable, it is usually memory pressure from on-host builds and/or running local Postgres on small instances.
+
+Recommended update flow:
+
+```bash
+git pull
+
+# Restart app without rebuilding (works for most code/template changes)
+docker compose up -d --no-build --force-recreate app
+```
+
+Only rebuild when `Dockerfile` or `requirements.txt` changed:
+
+```bash
+docker compose build app
+docker compose up -d app
+```
+
+If you need local Postgres too:
+
+```bash
+docker compose --profile local-db up -d app postgres
+```
+
+### One-command EC2 deploy (with local Postgres)
+
+Use the helper script:
+
+```bash
+./scripts/deploy_ec2.sh --pull
+```
+
+Behavior:
+
+- Always deploys `app` + local `postgres` (`local-db` profile)
+- Rebuilds image only when `Dockerfile` or `requirements.txt` changed
+- Supports manual full rebuild with:
+
+```bash
+./scripts/deploy_ec2.sh --rebuild
+```

@@ -13,12 +13,10 @@ services:
     environment:
       - FLASK_ENV=production
       - TZ=UTC
-      - DATABASE_URL=postgresql://tennisxml:tennisxml@postgres:5432/tennisxml
+      - DATABASE_URL=${DATABASE_URL:-}
     restart: unless-stopped
     volumes:
       - ./:/app:ro
-    depends_on:
-      - postgres
     # If you have a database file, mount a writable volume for it
     # - ./data:/app/data
 
@@ -36,6 +34,7 @@ services:
   postgres:
     image: postgres:16
     container_name: tennisxml-postgres
+    profiles: ["local-db"]
     environment:
       - POSTGRES_DB=tennisxml
       - POSTGRES_USER=tennisxml
