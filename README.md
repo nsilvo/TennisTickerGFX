@@ -22,15 +22,17 @@ The app listens on port 5000. Visit `http://localhost:5000`.
 
 ### With PostgreSQL (production)
 
-The compose file includes an optional `postgres` service (profile: `local-db`).
+The compose file includes a `postgres` service that starts automatically with
+the app; the app waits for it to be healthy and connects to it by default.
 
-- If you use external Postgres (RDS/Aurora), set `DATABASE_URL` in your shell/env and run only `app`.
-- If you want local Postgres in compose, enable profile `local-db`.
+- `docker compose up -d` brings up app + Postgres together.
+- If you use external Postgres (RDS/Aurora), set `DATABASE_URL` in your
+  shell/env (or `.env`) to override the built-in default and run only `app`.
 
 Start app with local Postgres:
 
 ```bash
-docker compose --profile local-db up --build -d
+docker compose up --build -d
 ```
 
 Persisted data lives in the `postgres-data` volume. To inspect:
@@ -168,7 +170,7 @@ docker compose up -d app
 If you need local Postgres too:
 
 ```bash
-docker compose --profile local-db up -d app postgres
+docker compose up -d app postgres
 ```
 
 ### One-command EC2 deploy (with local Postgres)
@@ -181,7 +183,7 @@ Use the helper script:
 
 Behavior:
 
-- Always deploys `app` + local `postgres` (`local-db` profile)
+- Always deploys `app` + local `postgres`
 - Rebuilds image only when `Dockerfile` or `requirements.txt` changed
 - Supports manual full rebuild with:
 

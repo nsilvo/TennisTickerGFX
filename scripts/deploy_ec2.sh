@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Deploy helper for low-memory EC2 hosts.
-# - Keeps local Postgres enabled (compose profile: local-db)
+# - Postgres always starts alongside the app (no profile needed)
 # - Rebuilds app image only when Dockerfile or requirements.txt changed
 # - Otherwise recreates containers without on-host build
 #
@@ -61,12 +61,12 @@ fi
 
 if [[ "$REBUILD_REQUIRED" == "true" ]]; then
   echo "[deploy] Rebuild required. Building app image..."
-  docker compose --profile local-db build app
+  docker compose build app
   echo "[deploy] Starting app + local postgres..."
-  docker compose --profile local-db up -d app postgres
+  docker compose up -d app postgres
 else
   echo "[deploy] No rebuild required. Recreating app + local postgres..."
-  docker compose --profile local-db up -d --no-build --force-recreate app postgres
+  docker compose up -d --no-build --force-recreate app postgres
 fi
 
 echo "[deploy] Done."
