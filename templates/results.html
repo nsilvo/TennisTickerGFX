@@ -552,6 +552,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     socket.on('connect', function () {
         console.log('SocketIO Connected.');
+        socket.emit('subscribe_all');
     });
 
     socket.on('disconnect', function () {

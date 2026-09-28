@@ -582,6 +582,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     socket.on("connect", () => {
         console.log("Bug overlay connected to Socket.IO.");
+        // Subscribe to just this overlay's match/court so the server only sends
+        // our own updates instead of broadcasting the full match list here.
+        if (currentMatchId) {
+            socket.emit("subscribe", {
+                matchid: currentMatchId,
+                court: (matchData && matchData.court) || ""
+            });
+        } else {
+            // No match resolved yet: fall back to full updates so we can latch on.
+            socket.emit("subscribe_all");
+        }
     });
 
     socket.on("disconnect", () => {
@@ -589,6 +600,24 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         // We do NOT hide the bug on disconnect; last known data remains.
     });
 
+    // Targeted single-match updates (normal path once subscribed)
+    socket.on("match_update", (data) => {
+        if (!data || !data.match) return;
+        const m = data.match;
+
+        // Court-room events can carry other matches on this court (e.g. an old
+        // completed match getting a correction) - only switch to a different
+        // match if it is actually live.
+        if (currentMatchId && String(m.matchid) !== String(currentMatchId)) {
+            const st = (m.matchstatus || '').toUpperCase();
+            const isLive = st.includes('IN PROGRESS') || st.includes('WARMUP') || st.includes('TEST');
+            if (!isLive) return;
+        }
+
+        updateBug(m);
+    });
+
+    // Full-list fallback (only received while subscribed via subscribe_all)
     socket.on("live_updates", (data) => {
         if (!data || !data.live_matches) return;
 
@@ -610,6 +639,11 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             if (live.length === 1) {
                 updated = live[0];
                 currentMatchId = updated.matchid;
+                // Now that we have a match, get targeted updates for it too
+                socket.emit("subscribe", {
+                    matchid: currentMatchId,
+                    court: updated.court || ""
+                });
             }
         }
 

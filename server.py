@@ -25,7 +25,7 @@ from flask import (
 import schedule
 
 
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room
 
 # --- Configuration ---
 XML_BASE_URL = "https://scores.tennisticker.de/scoreboard/livescores.aspx?"
@@ -57,13 +57,16 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
 # Allow all origins for SocketIO for easy testing
+# Verbose Socket.IO packet logging (very noisy with many overlay boxes; off by default)
+SOCKETIO_DEBUG = os.getenv("SOCKETIO_DEBUG", "false").strip().lower() in ("1", "true", "yes", "on")
+
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
 
     async_mode='gevent',  # use eventlet for proper websockets
-    logger=True,
-    engineio_logger=True,
+    logger=SOCKETIO_DEBUG,
+    engineio_logger=SOCKETIO_DEBUG,
     manage_session=False
 )
 manager = None
@@ -444,6 +447,7 @@ class XMLCacheManager:
 
         cursor = self.conn.cursor()
         updates_made = 0
+        changed_match_ids = []
 
         for match_elem in all_xml_elems:
             match_id_elem = match_elem.find('matchid')
@@ -624,6 +628,7 @@ class XMLCacheManager:
 
                 cursor.execute(sql, tuple(values))
                 updates_made += 1
+                changed_match_ids.append(match_id)
 
         self.conn.commit()
 
@@ -653,16 +658,28 @@ class XMLCacheManager:
         # --- 7. EMIT SOCKETIO UPDATE IF DATA CHANGED ---
         if updates_made > 0:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Parsed {len(all_xml_elems)} matches (live/completed/plan). "
-                  f"Updated {updates_made} changed records. Emitting SocketIO update.")
+                  f"Updated {updates_made} changed records. Emitting SocketIO updates.")
 
-            # Get all latest data for client-side filtering
             all_latest_data = self.get_latest_data()
+            now_str = datetime.now().strftime('%H:%M:%S')
 
-            # Emit to all connected clients on the default namespace
+            # Dashboards (room 'dashboard') get the full list...
             socketio.emit('live_updates', {
-                "timestamp": datetime.now().strftime('%H:%M:%S'),
+                "timestamp": now_str,
                 "live_matches": all_latest_data
-            })
+            }, to='dashboard')
+
+            # ...while each overlay box only receives its own match/court delta.
+            by_id = {str(m.get('matchid')): m for m in all_latest_data}
+            for mid in changed_match_ids:
+                m = by_id.get(str(mid))
+                if not m:
+                    continue
+                payload = {"timestamp": now_str, "match": m}
+                socketio.emit('match_update', payload, to=f"match_{mid}")
+                court = str(m.get('court') or '').strip()
+                if court:
+                    socketio.emit('match_update', payload, to=f"court_{court}")
 
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Parsed {len(all_xml_elems)} matches. No changes detected.")
@@ -781,12 +798,12 @@ def continuous_scraper_loop():
         if xml_data:
             manager.parse_and_cache_data(xml_data)
 
-        # Emit a simple UTC time heartbeat for the dashboard clock
+        # Emit a simple UTC time heartbeat for the dashboard clock (dashboards only)
         try:
-            # Emit heartbeat to all clients
             socketio.emit(
                 'server_time_utc',
-                {"time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
+                {"time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')},
+                to='dashboard'
             )
         except Exception as e:
             print(f"Error emitting server_time_utc: {e}")
@@ -1442,23 +1459,63 @@ def caspar_scoreboard():
 
 @socketio.on('connect')
 def test_connect():
-    """Sends the current match status immediately upon connection."""
+    """Lightweight connect: clients declare what they need via 'subscribe' / 'subscribe_all'."""
     print(f"Client connected: {request.sid}")
+
+
+@socketio.on('subscribe')
+def handle_subscribe(data):
+    """
+    Overlay subscription: join per-match and/or per-court rooms so this client
+    only receives 'match_update' events for its own match/court.
+    Payload: { matchid: "...", court: "..." } (either or both).
+    Replies immediately with a snapshot of the requested match.
+    """
+    data = data or {}
+    matchid = str(data.get('matchid') or '').strip()
+    court = str(data.get('court') or '').strip()
+
+    # Join exactly ONE room to avoid duplicate events: the court room when the
+    # court is known (also catches the next match on the same court), else the
+    # specific match room.
+    if court:
+        join_room(f"court_{court}")
+    elif matchid:
+        join_room(f"match_{matchid}")
+
+    print(f"Client {request.sid} subscribed to match='{matchid}' court='{court}'")
+
+    if manager and matchid:
+        try:
+            m = next((x for x in manager.get_latest_data()
+                      if str(x.get('matchid')) == matchid), None)
+            if m:
+                emit('match_update', {
+                    "timestamp": datetime.now().strftime('%H:%M:%S'),
+                    "match": m
+                })
+        except Exception as e:
+            print(f"Error sending subscribe snapshot to {request.sid}: {e}")
+
+
+@socketio.on('subscribe_all')
+def handle_subscribe_all(_data=None):
+    """
+    Dashboard subscription: joins the 'dashboard' room for full live_updates
+    broadcasts and the clock heartbeat. Replies with a full snapshot.
+    """
+    join_room('dashboard')
+    print(f"Client {request.sid} subscribed to dashboard (all matches)")
 
     if manager:
         try:
             all_matches = manager.get_latest_data()
-
-            # IMPORTANT: send ALL matches; frontend will filter live/completed/upcoming
             emit('live_updates', {
                 "timestamp": datetime.now().strftime('%H:%M:%S'),
                 "live_matches": all_matches
-            }, room=request.sid)
-
-            print(f"Sent initial status of {len(all_matches)} matches to new client: {request.sid}")
-
+            })
         except Exception as e:
-            print(f"Error sending initial status to new client: {e}")
+            print(f"Error sending dashboard snapshot to {request.sid}: {e}")
 
 
 @socketio.on('test_update_request')
@@ -1487,9 +1544,8 @@ def handle_test_update(data):
         ]
     }
 
-    # Emit the test data back to all clients
-    # Emit test data to all connected clients
-    socketio.emit('live_updates', test_update_data)
+    # Emit the test data to dashboard clients
+    socketio.emit('live_updates', test_update_data, to='dashboard')
 
 
 @socketio.on('disconnect')

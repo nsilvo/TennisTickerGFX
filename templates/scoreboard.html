@@ -386,6 +386,42 @@ function updateScoreboard(newRaw){
 
 const socket = io(window.location.origin);
 
+socket.on("connect", () => {
+    // Subscribe to just this scoreboard's match/court so the server only sends
+    // our own updates instead of broadcasting the full match list here.
+    if (matchId) {
+        socket.emit("subscribe", {
+            matchid: matchId,
+            court: (matchData && matchData.court) || ""
+        });
+    } else {
+        socket.emit("subscribe_all");
+    }
+});
+
+// Targeted single-match updates (normal path once subscribed)
+socket.on("match_update", data => {
+    if (!data || !data.match) return;
+    const m = data.match;
+
+    // Court-room events can carry other matches on this court (e.g. an old
+    // completed match getting a correction) - only switch to a different
+    // match if it is actually live.
+    if (matchId && String(m.matchid) !== String(matchId)) {
+        const st = (m.matchstatus || '').toUpperCase();
+        const isLive = st.includes('IN PROGRESS') || st.includes('WARMUP') || st.includes('TEST');
+        if (!isLive) return;
+    }
+
+    if (debugMode) {
+        const dbg = document.getElementById("dbg-socket");
+        if(dbg) dbg.textContent = JSON.stringify(data, null, 2);
+    }
+
+    updateScoreboard(m);
+});
+
+// Full-list fallback (only received while subscribed via subscribe_all)
 socket.on("live_updates", data => {
     if (debugMode) {
         const dbg = document.getElementById("dbg-socket");
@@ -396,6 +432,11 @@ socket.on("live_updates", data => {
 
     if(!matchId && data.live_matches.length > 0){
         matchId = data.live_matches[0].matchid;
+        // Now that we have a match, get targeted updates for it too
+        socket.emit("subscribe", {
+            matchid: matchId,
+            court: data.live_matches[0].court || ""
+        });
     }
 
     const updated = data.live_matches.find(m => m.matchid === matchId);
