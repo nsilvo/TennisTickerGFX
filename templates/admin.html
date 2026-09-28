@@ -1,6 +1,7 @@
 <!--
-File: templates/config.html
-Description: Runtime configuration page for changing active tournament ID.
+File: templates/admin.html
+Description: Login-protected admin page for changing TennisTicker feed
+             credentials (userid/contract) and the active tournament ID.
 Author: Nathan Silveston
 Contact: nathan@nkpa.co.uk | +44 7515 018048
 Copyright (c) 2025 Nathan Silveston. All rights reserved.
@@ -10,7 +11,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuration - Tournament Settings</title>
+    <title>Admin - Feed Settings</title>
     <style>
         :root {
             --background-dark: #101017;
@@ -155,6 +156,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             font-size: 1rem;
             font-weight: 700;
             color: var(--text-light);
+            word-break: break-all;
         }
 
         label {
@@ -196,8 +198,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             cursor: pointer;
         }
 
-        .btn:hover {
-            background: rgba(255, 193, 7, 0.3);
+        .btn:hover { background: rgba(255, 193, 7, 0.3); }
+
+        .btn.secondary {
+            border-color: rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--muted-text);
+        }
+
+        .btn.secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: var(--text-light);
         }
 
         .notice {
@@ -224,6 +235,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             font-size: 0.84rem;
             color: var(--muted-text);
         }
+
+        .logout-form {
+            margin-left: auto;
+        }
     </style>
 </head>
 <body>
@@ -236,15 +251,18 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <li><a href="/caspar/scoreboard/">📺 Scoreboard</a></li>
             <li><a href="/results">📋 Results</a></li>
             <li><a href="/caspar/bug/">🎥 Caspar Overlay</a></li>
-            <li><a href="/config" class="active">⚙ Config</a></li>
-            <li><a href="/admin">🔐 Admin</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+            <li><a href="/admin" class="active">🔐 Admin</a></li>
             <li><a href="/help">❓ Help</a></li>
         </ul>
+        <form class="logout-form" method="post" action="/admin/logout">
+            <button class="btn secondary" type="submit">Log Out</button>
+        </form>
     </div>
 </nav>
 
 <div class="container">
-    <h1>⚙ Tournament Configuration</h1>
+    <h1>🔐 Feed Administration</h1>
 
     <div class="card">
         {% if message %}
@@ -256,7 +274,15 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         <div class="meta-grid">
             <div class="meta-item">
-                <div class="meta-label">Current Tournament ID</div>
+                <div class="meta-label">Current User ID</div>
+                <div class="meta-value">{{ tt_userid }}</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Current Contract</div>
+                <div class="meta-value">{{ tt_contract }}</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Tournament ID</div>
                 <div class="meta-value">{{ tournament_id }}</div>
             </div>
             <div class="meta-item">
@@ -265,8 +291,30 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             </div>
         </div>
 
-        <form method="post" action="/config">
-            <label for="tournament_id">New Tournament ID (numbers only)</label>
+        <form method="post" action="/admin">
+            <label for="tt_userid">TennisTicker User ID</label>
+            <input
+                id="tt_userid"
+                name="tt_userid"
+                type="text"
+                pattern="[A-Za-z0-9]{1,64}"
+                placeholder="e.g. EFBBCDD3"
+                required
+                value="{{ tt_userid }}"
+            >
+
+            <label for="tt_contract">TennisTicker Contract</label>
+            <input
+                id="tt_contract"
+                name="tt_contract"
+                type="text"
+                pattern="[A-Za-z0-9_\-]{1,64}"
+                placeholder="e.g. ONSIDEPROD"
+                required
+                value="{{ tt_contract }}"
+            >
+
+            <label for="tournament_id">Tournament ID (numbers only)</label>
             <input
                 id="tournament_id"
                 name="tournament_id"
@@ -274,14 +322,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 inputmode="numeric"
                 pattern="[0-9]+"
                 placeholder="e.g. 7140"
-                required
                 value="{{ tournament_id }}"
             >
-            <button class="btn" type="submit">Save Tournament ID</button>
+
+            <button class="btn" type="submit">Save Settings</button>
         </form>
 
         <p class="hint">
-            This updates the active feed immediately for the running scraper. Existing cached rows will naturally refresh as new data arrives.
+            Changes take effect on the scraper's next fetch (within the scrape interval)
+            and are persisted to the database, so they survive restarts. Environment
+            variables (TT_USERID / TT_CONTRACT / TOURNAMENT_ID) only act as defaults
+            when nothing has been saved here yet.
         </p>
     </div>
 </div>

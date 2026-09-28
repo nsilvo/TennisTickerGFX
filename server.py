@@ -8,6 +8,9 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 import xml.etree.ElementTree as ET
 import sqlite3
 import os
+import hmac
+import secrets
+from functools import wraps
 from urllib.parse import urlparse
 import requests
 import time
@@ -15,7 +18,10 @@ import json
 import re
 from datetime import datetime, timedelta
 from threading import Thread, Lock
-from flask import Flask, jsonify, request, render_template, make_response
+from flask import (
+    Flask, jsonify, request, render_template, make_response,
+    session, redirect, url_for
+)
 import schedule
 
 
@@ -23,7 +29,6 @@ from flask_socketio import SocketIO, emit
 
 # --- Configuration ---
 XML_BASE_URL = "https://scores.tennisticker.de/scoreboard/livescores.aspx?"
-QUERY_STRING = "userid=EFBBCDD3&tournid={tournid}&contract=ONSIDEPROD"
 DB_NAME = os.getenv("SQLITE_DB_PATH", "casparcg_match_cache.db")
 
 SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "5"))
@@ -31,10 +36,26 @@ CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '7140')
 ENABLE_SCRAPER = os.getenv("ENABLE_SCRAPER", "true").strip().lower() in ("1", "true", "yes", "on")
 SERVER_PORT = int(os.getenv("PORT", "5000"))
 
+# TennisTicker feed credentials (runtime-changeable via /admin, persisted in DB)
+TT_USERID = os.getenv("TT_USERID") or "EFBBCDD3"
+TT_CONTRACT = os.getenv("TT_CONTRACT") or "ONSIDEPROD"
+
+# Admin login. If ADMIN_PASSWORD is unset the admin page is disabled.
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 MAX_SETS = 11
 # --- End Configuration ---
 
 app = Flask(__name__)
+# Session config for the admin login. Provide SECRET_KEY in the environment so
+# logins survive restarts; otherwise a random key is generated per boot.
+app.secret_key = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower() in ("1", "true", "yes", "on"),
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 # Allow all origins for SocketIO for easy testing
 socketio = SocketIO(
     app,
@@ -184,7 +205,51 @@ class XMLCacheManager:
         ensure_column("schedtime", "TEXT", "")
         ensure_column("is_plan", "INTEGER", "DEFAULT 0")
 
+        # Key/value store for runtime settings changed via the admin page
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+
         self.conn.commit()
+
+    def get_setting(self, key):
+        """Return a persisted setting value, or None if not set."""
+        cursor = self.conn.cursor()
+        try:
+            if self.param_style == 'sqlite':
+                cursor.execute("SELECT value FROM app_settings WHERE key=?", (key,))
+            else:
+                cursor.execute("SELECT value FROM app_settings WHERE key=%s", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            print(f"Error reading setting '{key}': {e}")
+            return None
+
+    def save_setting(self, key, value):
+        """Persist a setting so it survives restarts."""
+        cursor = self.conn.cursor()
+        try:
+            if self.param_style == 'sqlite':
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value) VALUES (?, ?)
+                    ON CONFLICT (key) DO UPDATE SET value=excluded.value
+                """, (key, value))
+            else:
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value) VALUES (%s, %s)
+                    ON CONFLICT (key) DO UPDATE SET value=excluded.value
+                """, (key, value))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error saving setting '{key}': {e}")
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
     def archive_completed_previous_day_matches(self):
         """
@@ -277,9 +342,12 @@ class XMLCacheManager:
             print(f"Error cleaning up archived matches: {e}")
 
     def get_full_xml_url(self):
-        global CURRENT_TOURNAMENT_ID
-        full_query = QUERY_STRING.format(tournid=CURRENT_TOURNAMENT_ID)
-        return XML_BASE_URL + full_query
+        with state_lock:
+            return (
+                f"{XML_BASE_URL}userid={TT_USERID}"
+                f"&tournid={CURRENT_TOURNAMENT_ID}"
+                f"&contract={TT_CONTRACT}"
+            )
 
     def fetch_xml_data(self):
         xml_url = self.get_full_xml_url()
@@ -676,10 +744,29 @@ class XMLCacheManager:
 # ====================================================================
 # Background Scraper Thread
 # ====================================================================
+def load_persisted_settings(mgr):
+    """Apply admin settings saved in the DB (they override env defaults)."""
+    global CURRENT_TOURNAMENT_ID, TT_USERID, TT_CONTRACT
+
+    with state_lock:
+        saved_tournid = mgr.get_setting("tournament_id")
+        if saved_tournid and saved_tournid.isdigit():
+            CURRENT_TOURNAMENT_ID = saved_tournid
+        saved_userid = mgr.get_setting("tt_userid")
+        if saved_userid:
+            TT_USERID = saved_userid
+        saved_contract = mgr.get_setting("tt_contract")
+        if saved_contract:
+            TT_CONTRACT = saved_contract
+
+    print(f"Settings loaded: tournament={CURRENT_TOURNAMENT_ID}, userid={TT_USERID}, contract={TT_CONTRACT}")
+
+
 def continuous_scraper_loop():
     """The main loop that runs in a separate thread to continuously scrape the XML."""
     global manager
     manager = XMLCacheManager(DB_NAME)
+    load_persisted_settings(manager)
     print("\n--- Scraper Loop Starting ---")
 
     # Schedule archiving and cleanup at midnight
@@ -773,6 +860,9 @@ def update_tournament_id(new_tour_id):
             print(f"\n*** TOURNAMENT ID CHANGED: {CURRENT_TOURNAMENT_ID} -> {candidate} ***\n")
             CURRENT_TOURNAMENT_ID = candidate
 
+    if manager:
+        manager.save_setting("tournament_id", candidate)
+
     return True, f"Scraper is now tracking Tournament ID: {candidate}", 200
 
 @app.route('/', methods=['GET'])
@@ -859,6 +949,124 @@ def config_page():
     return response
 
 
+# ====================================================================
+# Admin (login-protected feed credential settings)
+# ====================================================================
+
+USERID_PATTERN = re.compile(r'^[A-Za-z0-9]{1,64}$')
+CONTRACT_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def admin_required(f):
+    """Redirect to the admin login page unless this session is authenticated."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("admin_authenticated"):
+            return redirect(url_for("admin_login"))
+        return f(*args, **kwargs)
+    return wrapper
+
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    """Admin login. Requires the ADMIN_PASSWORD environment variable to be set."""
+    error = None
+
+    if not ADMIN_PASSWORD:
+        return render_template('admin_login.html', error=None, admin_disabled=True)
+
+    if session.get("admin_authenticated"):
+        return redirect(url_for("admin_page"))
+
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if hmac.compare_digest(password, ADMIN_PASSWORD):
+            session.permanent = True
+            session['admin_authenticated'] = True
+            return redirect(url_for("admin_page"))
+        # Small fixed delay to slow down brute-force attempts
+        time.sleep(0.5)
+        error = "Incorrect password."
+
+    return render_template('admin_login.html', error=error, admin_disabled=False)
+
+
+@app.route('/admin/logout', methods=['POST'])
+def admin_logout():
+    session.pop('admin_authenticated', None)
+    return redirect(url_for("admin_login"))
+
+
+@app.route('/admin', methods=['GET', 'POST'])
+@admin_required
+def admin_page():
+    """Admin page: change the TennisTicker userid/contract and tournament id at runtime."""
+    global TT_USERID, TT_CONTRACT
+
+    message = None
+    error = None
+
+    if request.method == 'POST':
+        new_userid = request.form.get('tt_userid', '').strip()
+        new_contract = request.form.get('tt_contract', '').strip()
+        new_tournid = request.form.get('tournament_id', '').strip()
+
+        if not USERID_PATTERN.match(new_userid):
+            error = "User ID must be 1-64 letters or digits."
+        elif not CONTRACT_PATTERN.match(new_contract):
+            error = "Contract must be 1-64 letters, digits, hyphens or underscores."
+        else:
+            changed = []
+            with state_lock:
+                if new_userid != TT_USERID:
+                    print(f"\n*** TT USERID CHANGED: {TT_USERID} -> {new_userid} ***\n")
+                    TT_USERID = new_userid
+                    changed.append("User ID")
+                if new_contract != TT_CONTRACT:
+                    print(f"\n*** TT CONTRACT CHANGED: {TT_CONTRACT} -> {new_contract} ***\n")
+                    TT_CONTRACT = new_contract
+                    changed.append("Contract")
+
+            if manager:
+                manager.save_setting("tt_userid", new_userid)
+                manager.save_setting("tt_contract", new_contract)
+
+            if new_tournid:
+                ok, msg, _status = update_tournament_id(new_tournid)
+                if ok:
+                    changed.append("Tournament ID")
+                else:
+                    error = msg
+
+            if error is None:
+                if changed:
+                    message = f"Saved: {', '.join(changed)}. The scraper uses the new values on its next fetch."
+                    if manager is None:
+                        message += " (Warning: scraper disabled, values not persisted to DB.)"
+                else:
+                    message = "No changes made."
+
+    with state_lock:
+        current_userid = TT_USERID
+        current_contract = TT_CONTRACT
+        tour_id = CURRENT_TOURNAMENT_ID
+        interval = SCRAPE_INTERVAL
+
+    response = make_response(render_template(
+        'admin.html',
+        tt_userid=current_userid,
+        tt_contract=current_contract,
+        tournament_id=tour_id,
+        scrape_interval=interval,
+        message=message,
+        error=error
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
 @app.route('/api/v1/scores', methods=['GET'])
 @app.route('/api/v1/scores/court/<court_number>', methods=['GET'])
 def get_all_scores(court_number=None):
@@ -928,6 +1136,256 @@ def get_single_match(match_id):
             })
 
     return jsonify({"error": f"Match with ID '{match_id}' not found."}), 404
+
+
+# ====================================================================
+# vMix Data Source Endpoints (flat JSON, one row per court)
+# ====================================================================
+
+VMIX_LIVE_KEYWORDS = ("IN PROGRESS", "WARMUP", "TEST")
+VMIX_SETS_PER_ROW = 5       # per-court endpoint exposes up to 5 sets (tennis best-of-5)
+VMIX_SETS_WIDE = 3          # multi-court board shows 3 sets (padel / best-of-3 tennis)
+VMIX_MAX_COURTS = 8
+
+
+def classify_match_status(match):
+    """Bucket a cached match into LIVE / UPCOMING / COMPLETED for graphics logic."""
+    status = str(match.get("matchstatus", "")).upper()
+    if match.get("is_plan") or status == "UPCOMING":
+        return "UPCOMING"
+    if any(k in status for k in VMIX_LIVE_KEYWORDS):
+        return "LIVE"
+    if match.get("winner_name") or "COMPLETED" in status or "FINISHED" in status:
+        return "COMPLETED"
+    # Suspended / rain delay / anything else: pass the raw status through
+    return status or "UPCOMING"
+
+
+def is_set_won(games, opp_games):
+    """True if a set score represents a completed, won set (incl. 7-6 TB and 10-point match TB)."""
+    try:
+        g, o = int(games), int(opp_games)
+    except (TypeError, ValueError):
+        return False
+    if g >= 6 and g - o >= 2:
+        return True
+    if g == 7 and o in (5, 6):
+        return True
+    if g >= 10 and g - o >= 2:  # match tiebreak (padel / short formats)
+        return True
+    return False
+
+
+def court_sort_key(court):
+    """Natural sort: numbered courts first in numeric order, then named courts alphabetically."""
+    m = re.search(r"(\d+)", str(court))
+    if m:
+        return (0, int(m.group(1)), str(court))
+    return (1, 0, str(court))
+
+
+def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
+    """
+    Flatten one cached match into a single-level dict of strings,
+    ready for direct field mapping in vMix Data Sources.
+    """
+    status = classify_match_status(match)
+    is_live = (status == "LIVE")
+
+    # player2serve: 1 = player 1 serving, 2 = player 2 serving (TennisTicker convention)
+    serve = str(match.get("player2serve") or "")
+    p1_serve = "●" if (is_live and serve == "1") else ""
+    p2_serve = "●" if (is_live and serve == "2") else ""
+
+    row = {
+        "matchid": str(match.get("matchid") or ""),
+        "court": str(match.get("court") or ""),
+        "status": status,
+        "matchname": str(match.get("matchname") or ""),
+        "tournament": str(match.get("tname") or ""),
+        "schedtime": str(match.get("schedtime") or ""),
+        "winner_name": str(match.get("winner_name") or ""),
+
+        "p1_name": str(match.get("player1") or ""),
+        "p2_name": str(match.get("player2") or ""),
+        "p1_surname": str(match.get("player1_surname") or ""),
+        "p2_surname": str(match.get("player2_surname") or ""),
+        "p1_country": str(match.get("player1_country") or ""),
+        "p2_country": str(match.get("player2_country") or ""),
+
+        "p1_serve": p1_serve,
+        "p2_serve": p2_serve,
+
+        # Point score within the current game ('00', '15', '30', '40', 'AD') – live only
+        "p1_points": str(match.get("game1") or "") if is_live else "",
+        "p2_points": str(match.get("game2") or "") if is_live else "",
+    }
+
+    def as_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    sets_raw = []
+    for i in range(1, sets_to_include + 1):
+        p1 = match.get(f"set{i}_p1")
+        p2 = match.get(f"set{i}_p2")
+        present = p1 is not None and p2 is not None
+        sets_raw.append((present, as_int(p1), as_int(p2), str(match.get(f"set{i}_tb") or "")))
+
+    # Last set with any games on the board; while live this is the set in play
+    # (a brand-new match sits in set 1 at 0-0).
+    last_nonzero = 0
+    for i, (present, p1, p2, _tb) in enumerate(sets_raw, start=1):
+        if present and (p1 > 0 or p2 > 0):
+            last_nonzero = i
+    current_set = (last_nonzero or (1 if sets_raw[0][0] else 0)) if is_live else 0
+
+    p1_sets_won = 0
+    p2_sets_won = 0
+    summary_parts = []
+
+    for i, (present, p1, p2, tb) in enumerate(sets_raw, start=1):
+        # Show a set only if it has games, or it is the current live set (may be 0-0)
+        show = present and ((p1 > 0 or p2 > 0) or i == current_set)
+
+        row[f"p1_set{i}"] = str(p1) if show else ""
+        row[f"p2_set{i}"] = str(p2) if show else ""
+        row[f"set{i}_tb"] = tb if show else ""
+
+        if show:
+            summary_parts.append(f"{p1}-{p2}")
+            if is_set_won(p1, p2):
+                p1_sets_won += 1
+            elif is_set_won(p2, p1):
+                p2_sets_won += 1
+
+    row["p1_sets_won"] = str(p1_sets_won)
+    row["p2_sets_won"] = str(p2_sets_won)
+    row["sets_summary"] = " ".join(summary_parts)
+    row["current_set"] = str(current_set) if is_live else ""
+
+    # Games in the set currently being played (bug-style graphics)
+    if is_live and current_set:
+        row["p1_games"] = row[f"p1_set{current_set}"]
+        row["p2_games"] = row[f"p2_set{current_set}"]
+    else:
+        row["p1_games"] = ""
+        row["p2_games"] = ""
+
+    return row
+
+
+def vmix_blank_row(sets_to_include=VMIX_SETS_PER_ROW):
+    """Empty row with the same keys as vmix_flat_row, to pad unused court slots."""
+    return {k: "" for k in vmix_flat_row({}, sets_to_include=sets_to_include)}
+
+
+def select_match_per_court(all_matches):
+    """
+    Pick the single most relevant match per court:
+    live first, then earliest upcoming, then most recently completed.
+    """
+    by_court = {}
+    for m in all_matches:
+        court = str(m.get("court") or "").strip()
+        if court:
+            by_court.setdefault(court, []).append(m)
+
+    selected = {}
+    for court, ms in by_court.items():
+        live = [x for x in ms if classify_match_status(x) == "LIVE"]
+        if live:
+            selected[court] = live[0]
+            continue
+        upcoming = [x for x in ms if classify_match_status(x) == "UPCOMING"]
+        if upcoming:
+            selected[court] = sorted(upcoming, key=lambda x: str(x.get("schedtime") or ""))[0]
+            continue
+        completed = [x for x in ms if classify_match_status(x) == "COMPLETED"]
+        if completed:
+            selected[court] = sorted(completed, key=lambda x: x.get("timestamp") or 0, reverse=True)[0]
+            continue
+        selected[court] = ms[0]
+    return selected
+
+
+@app.route('/api/v1/vmix', methods=['GET'])
+def vmix_datasource():
+    """
+    vMix Data Source feed: flat JSON array, ONE ROW PER COURT.
+    The most relevant match per court is chosen (live > upcoming > completed).
+    Optional: ?court=2 to restrict to a single court (exact-token match).
+    """
+    if manager is None:
+        return jsonify([]), 503
+
+    court_filter = (request.args.get("court") or "").strip().lower()
+
+    all_matches = manager.get_latest_data()
+    selected = select_match_per_court(all_matches)
+
+    rows = []
+    for court in sorted(selected.keys(), key=court_sort_key):
+        if court_filter:
+            # Token-based match so 'court=1' does not also hit 'Court 11'
+            tokens = [t.lower() for t in re.split(r'\W+', court) if t]
+            if court_filter not in tokens and court_filter != court.lower():
+                continue
+        rows.append(vmix_flat_row(selected[court]))
+
+    return jsonify(rows)
+
+
+@app.route('/api/v1/vmix/wide', methods=['GET'])
+def vmix_datasource_wide():
+    """
+    Multi-court board feed: JSON array with a SINGLE row whose columns are
+    flattened per court slot: court1_p1_name, court1_p1_set1, ... court4_p2_points.
+    Designed to drive one vMix title showing several courts at once.
+
+    Optional:
+      ?courts=4                  number of court slots (1-8, default 4)
+      ?order=Court 1,Court 2     explicit court order/selection by name
+    """
+    if manager is None:
+        return jsonify([{}]), 503
+
+    try:
+        num_slots = max(1, min(VMIX_MAX_COURTS, int(request.args.get("courts", 4))))
+    except ValueError:
+        num_slots = 4
+
+    all_matches = manager.get_latest_data()
+    selected = select_match_per_court(all_matches)
+
+    order_param = (request.args.get("order") or "").strip()
+    if order_param:
+        wanted = [c.strip().lower() for c in order_param.split(",") if c.strip()]
+        lookup = {c.lower(): c for c in selected}
+        court_order = [lookup[w] for w in wanted if w in lookup]
+    else:
+        court_order = sorted(selected.keys(), key=court_sort_key)
+
+    tournament = ""
+    for m in selected.values():
+        if m.get("tname"):
+            tournament = str(m["tname"])
+            break
+
+    row = {"tournament": tournament}
+    blank = vmix_blank_row(sets_to_include=VMIX_SETS_WIDE)
+
+    for idx in range(1, num_slots + 1):
+        if idx <= len(court_order):
+            flat = vmix_flat_row(selected[court_order[idx - 1]], sets_to_include=VMIX_SETS_WIDE)
+        else:
+            flat = blank
+        for key, value in flat.items():
+            row[f"court{idx}_{key}"] = value
+
+    return jsonify([row])
 
 
 # ====================================================================

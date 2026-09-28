@@ -14,6 +14,15 @@ services:
       - FLASK_ENV=production
       - TZ=UTC
       - DATABASE_URL=${DATABASE_URL:-}
+      # Admin page login (page is disabled when unset)
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # Keeps admin sessions valid across restarts
+      - SECRET_KEY=${SECRET_KEY:-}
+      # Set to true when serving over HTTPS (e.g. behind the nginx proxy)
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
+      # Defaults for the TennisTicker feed; the /admin page overrides these
+      - TT_USERID=${TT_USERID:-}
+      - TT_CONTRACT=${TT_CONTRACT:-}
     restart: unless-stopped
     volumes:
       - ./:/app:ro

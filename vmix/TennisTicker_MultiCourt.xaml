@@ -1,0 +1,346 @@
+<!--
+  File: vmix/TennisTicker_MultiCourt.xaml
+  Description: vMix XAML title - 4-court live scoreboard (tennis & padel).
+               Field names match the columns of /api/v1/vmix/wide 1:1,
+               so every text field maps straight onto the vMix Data Source.
+  Author: Nathan Silveston
+  Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<Page xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Width="1920" Height="1080" Background="Transparent">
+  <Canvas Width="1920" Height="1080">
+
+    <!-- Tournament header -->
+    <Border Canvas.Left="510" Canvas.Top="60" Width="900" Height="80"
+            CornerRadius="14" BorderBrush="#40FFFFFF" BorderThickness="2" Background="#F50A0A12">
+      <TextBlock x:Name="tournament" Text="TOURNAMENT" FontFamily="Arial" FontSize="36"
+                 FontWeight="Bold" Foreground="White"
+                 HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Border>
+
+    <!-- ================= COURT SLOT 1 ================= -->
+    <Border Canvas.Left="60" Canvas.Top="170" Width="880" Height="380"
+            CornerRadius="18" BorderBrush="#40FFFFFF" BorderThickness="2">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+          <GradientStop Color="#F50A0A12" Offset="0"/>
+          <GradientStop Color="#F50F0F1E" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Grid Margin="26,16,26,20">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="66"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="44"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="106"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="court1_court" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                   Text="COURT 1" FontFamily="Arial" FontSize="30" FontWeight="Bold"
+                   Foreground="#FFD9A441" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court1_status" Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="3"
+                   Text="LIVE" FontFamily="Arial" FontSize="22" FontWeight="Bold"
+                   Foreground="#B4FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+        <TextBlock x:Name="court1_p1_serve" Grid.Row="1" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court1_p1_name" Grid.Row="1" Grid.Column="1"
+                   Text="PLAYER ONE" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="1" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p1_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p1_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p1_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court1_p1_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+
+        <TextBlock x:Name="court1_p2_serve" Grid.Row="2" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court1_p2_name" Grid.Row="2" Grid.Column="1"
+                   Text="PLAYER TWO" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="2" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p2_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p2_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court1_p2_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court1_p2_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- ================= COURT SLOT 2 ================= -->
+    <Border Canvas.Left="980" Canvas.Top="170" Width="880" Height="380"
+            CornerRadius="18" BorderBrush="#40FFFFFF" BorderThickness="2">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+          <GradientStop Color="#F50A0A12" Offset="0"/>
+          <GradientStop Color="#F50F0F1E" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Grid Margin="26,16,26,20">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="66"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="44"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="106"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="court2_court" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                   Text="COURT 2" FontFamily="Arial" FontSize="30" FontWeight="Bold"
+                   Foreground="#FFD9A441" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court2_status" Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="3"
+                   Text="LIVE" FontFamily="Arial" FontSize="22" FontWeight="Bold"
+                   Foreground="#B4FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+        <TextBlock x:Name="court2_p1_serve" Grid.Row="1" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court2_p1_name" Grid.Row="1" Grid.Column="1"
+                   Text="PLAYER ONE" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="1" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p1_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p1_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p1_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court2_p1_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+
+        <TextBlock x:Name="court2_p2_serve" Grid.Row="2" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court2_p2_name" Grid.Row="2" Grid.Column="1"
+                   Text="PLAYER TWO" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="2" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p2_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p2_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court2_p2_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court2_p2_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- ================= COURT SLOT 3 ================= -->
+    <Border Canvas.Left="60" Canvas.Top="620" Width="880" Height="380"
+            CornerRadius="18" BorderBrush="#40FFFFFF" BorderThickness="2">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+          <GradientStop Color="#F50A0A12" Offset="0"/>
+          <GradientStop Color="#F50F0F1E" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Grid Margin="26,16,26,20">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="66"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="44"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="106"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="court3_court" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                   Text="COURT 3" FontFamily="Arial" FontSize="30" FontWeight="Bold"
+                   Foreground="#FFD9A441" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court3_status" Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="3"
+                   Text="LIVE" FontFamily="Arial" FontSize="22" FontWeight="Bold"
+                   Foreground="#B4FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+        <TextBlock x:Name="court3_p1_serve" Grid.Row="1" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court3_p1_name" Grid.Row="1" Grid.Column="1"
+                   Text="PLAYER ONE" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="1" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p1_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p1_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p1_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court3_p1_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+
+        <TextBlock x:Name="court3_p2_serve" Grid.Row="2" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court3_p2_name" Grid.Row="2" Grid.Column="1"
+                   Text="PLAYER TWO" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="2" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p2_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p2_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court3_p2_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court3_p2_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- ================= COURT SLOT 4 ================= -->
+    <Border Canvas.Left="980" Canvas.Top="620" Width="880" Height="380"
+            CornerRadius="18" BorderBrush="#40FFFFFF" BorderThickness="2">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+          <GradientStop Color="#F50A0A12" Offset="0"/>
+          <GradientStop Color="#F50F0F1E" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Grid Margin="26,16,26,20">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="66"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="44"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="78"/>
+          <ColumnDefinition Width="106"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="court4_court" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3"
+                   Text="COURT 4" FontFamily="Arial" FontSize="30" FontWeight="Bold"
+                   Foreground="#FFD9A441" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court4_status" Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="3"
+                   Text="LIVE" FontFamily="Arial" FontSize="22" FontWeight="Bold"
+                   Foreground="#B4FFFFFF" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+        <TextBlock x:Name="court4_p1_serve" Grid.Row="1" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court4_p1_name" Grid.Row="1" Grid.Column="1"
+                   Text="PLAYER ONE" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="1" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p1_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p1_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p1_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="1" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court4_p1_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+
+        <TextBlock x:Name="court4_p2_serve" Grid.Row="2" Grid.Column="0"
+                   Text="●" FontFamily="Arial" FontSize="30" Foreground="#FFFFD34D"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <TextBlock x:Name="court4_p2_name" Grid.Row="2" Grid.Column="1"
+                   Text="PLAYER TWO" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                   Foreground="White" VerticalAlignment="Center" Margin="0,0,16,0"
+                   TextTrimming="CharacterEllipsis"/>
+        <Border Grid.Row="2" Grid.Column="2" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p2_set1" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="3" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p2_set2" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="4" Background="#2EFFFFFF" CornerRadius="8" Margin="5,14,5,14">
+          <TextBlock x:Name="court4_p2_set3" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="5" Background="#FFD9A441" CornerRadius="8" Margin="5,14,0,14">
+          <TextBlock x:Name="court4_p2_points" Text="" FontFamily="Arial" FontSize="34" FontWeight="Bold"
+                     Foreground="#FF0A0A12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+      </Grid>
+    </Border>
+  </Canvas>
+</Page>

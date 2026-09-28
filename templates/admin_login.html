@@ -1,0 +1,146 @@
+<!--
+File: templates/admin_login.html
+Description: Login page for the admin settings area.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <style>
+        :root {
+            --background-dark: #101017;
+            --text-light: #f5f5f7;
+            --muted-text: #a0a0b0;
+            --primary-accent: #0d6efd;
+            --error-color: #ff4b5c;
+            --test-color: #ffc107;
+            --border-soft: #333344;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            padding: 32px 16px 48px;
+            background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+            color: var(--text-light);
+            line-height: 1.5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        h1 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin: 0 0 18px;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 420px;
+            background: rgba(12, 12, 20, 0.86);
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            padding: 28px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        label {
+            display: block;
+            font-size: 0.82rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted-text);
+            margin-bottom: 8px;
+        }
+
+        input[type="password"] {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.35);
+            color: var(--text-light);
+            border: 1px solid var(--border-soft);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 1rem;
+            margin-bottom: 14px;
+        }
+
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 193, 7, 0.7);
+            background: rgba(255, 193, 7, 0.16);
+            color: var(--test-color);
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        .btn:hover { background: rgba(255, 193, 7, 0.3); }
+
+        .notice {
+            margin-bottom: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .notice.error {
+            background: rgba(255, 75, 92, 0.16);
+            border: 1px solid rgba(255, 75, 92, 0.45);
+            color: var(--error-color);
+        }
+
+        .hint {
+            margin-top: 14px;
+            font-size: 0.84rem;
+            color: var(--muted-text);
+        }
+
+        .hint a { color: var(--muted-text); }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h1>🔐 Admin Login</h1>
+
+    {% if admin_disabled %}
+    <div class="notice error">
+        Admin access is disabled: set the <strong>ADMIN_PASSWORD</strong> environment
+        variable and restart the server to enable it.
+    </div>
+    {% else %}
+        {% if error %}
+        <div class="notice error">{{ error }}</div>
+        {% endif %}
+
+        <form method="post" action="/admin/login">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" required autofocus autocomplete="current-password">
+            <button class="btn" type="submit">Log In</button>
+        </form>
+    {% endif %}
+
+    <p class="hint"><a href="/">← Back to dashboard</a></p>
+</div>
+</body>
+</html>

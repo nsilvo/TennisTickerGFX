@@ -62,6 +62,20 @@ docker compose up --build -d app
 - `SCRAPE_INTERVAL`: startup scrape interval in seconds (defaults to `5`)
 - `ENABLE_SCRAPER`: start background XML polling loop (`true` by default)
 - `SQLITE_DB_PATH`: sqlite filename/path when not using `DATABASE_URL`
+- `TT_USERID` / `TT_CONTRACT`: default TennisTicker feed credentials; values
+  saved on the `/admin` page override these and persist in the database
+- `ADMIN_PASSWORD`: enables the login-protected `/admin` page (page is
+  disabled when unset)
+- `SECRET_KEY`: Flask session secret; set it so admin logins survive restarts
+- `SESSION_COOKIE_SECURE`: set `true` when serving over HTTPS
+
+## Admin page
+
+`/admin` (login at `/admin/login`, password = `ADMIN_PASSWORD`) lets you change
+the TennisTicker `userid`, `contract` and tournament id at runtime. Changes
+apply on the scraper's next fetch and are persisted to the database
+(`app_settings` table), so they survive restarts and take precedence over the
+environment defaults.
 
 ## AWS App Runner
 
@@ -78,7 +92,8 @@ This repo is prepared for App Runner in two common modes:
 	- `PORT=5000`
 	- `TZ=UTC`
 	- `DATABASE_URL=postgresql://...` (recommended for production)
-	- Optional: `TOURNAMENT_ID`, `SCRAPE_INTERVAL`, `ENABLE_SCRAPER`
+	- `ADMIN_PASSWORD` and `SECRET_KEY` (to enable the `/admin` page)
+	- Optional: `TOURNAMENT_ID`, `SCRAPE_INTERVAL`, `ENABLE_SCRAPER`, `TT_USERID`, `TT_CONTRACT`
 4. Health check path: `/health`
 
 ### Container deploy
