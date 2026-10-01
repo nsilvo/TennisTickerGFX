@@ -1570,8 +1570,8 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
         # Show a set only if it has games, or it is the current live set (may be 0-0)
         show = present and ((p1 > 0 or p2 > 0) or i == current_set)
 
-        row[f"p1_set{i}"] = str(p1) if show else ""
-        row[f"p2_set{i}"] = str(p2) if show else ""
+        row[f"p1_set{i}"] = str(p1) if show else "-"
+        row[f"p2_set{i}"] = str(p2) if show else "-"
         row[f"set{i}_tb"] = tb if show else ""
 
         if show:
