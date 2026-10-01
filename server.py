@@ -1444,8 +1444,8 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
 
     # player2serve: 1 = player 1 serving, 2 = player 2 serving (TennisTicker convention)
     serve = str(match.get("player2serve") or "")
-    p1_serve = "●" if (is_live and serve == "1") else ""
-    p2_serve = "●" if (is_live and serve == "2") else ""
+    p1_serve = "1" if (is_live and serve == "1") else ""
+    p2_serve = "1" if (is_live and serve == "2") else ""
 
     row = {
         "matchid": str(match.get("matchid") or ""),
@@ -1465,6 +1465,8 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
 
         "p1_serve": p1_serve,
         "p2_serve": p2_serve,
+        # Raw serving player indicator: "1" or "2", blank when not live
+        "player2serve": serve if (is_live and serve in ("1", "2")) else "",
 
         # Point score within the current game ('00', '15', '30', '40', 'AD') – live only
         "p1_points": str(match.get("game1") or "") if is_live else "",
