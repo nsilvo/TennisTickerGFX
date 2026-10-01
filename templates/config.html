@@ -177,7 +177,24 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             margin-bottom: 14px;
         }
 
+        select {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.35);
+            color: var(--text-light);
+            border: 1px solid var(--border-soft);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 1rem;
+            margin-bottom: 14px;
+        }
+
         input[type="text"]:focus {
+            outline: none;
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
+        }
+
+        select:focus {
             outline: none;
             border-color: var(--primary-accent);
             box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.2);
@@ -224,6 +241,60 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             font-size: 0.84rem;
             color: var(--muted-text);
         }
+
+        .logo-preview {
+            margin: 10px 0 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .logo-preview img {
+            max-width: 160px;
+            max-height: 80px;
+            object-fit: contain;
+            display: block;
+        }
+
+        .subheading {
+            margin: 28px 0 12px;
+            font-size: 1rem;
+            color: var(--test-color);
+        }
+
+        .stream-row {
+            display: grid;
+            grid-template-columns: 140px minmax(0, 1fr);
+            gap: 12px;
+            align-items: start;
+            margin-bottom: 10px;
+        }
+
+        .stream-controls {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .stream-controls label {
+            margin-bottom: 6px;
+            font-size: 0.74rem;
+        }
+
+        @media (max-width: 720px) {
+            .stream-row {
+                grid-template-columns: 1fr;
+                gap: 4px;
+            }
+
+            .stream-controls {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -266,6 +337,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         </div>
 
         <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="tournament_settings">
             <label for="tournament_id">New Tournament ID (numbers only)</label>
             <input
                 id="tournament_id"
@@ -283,7 +355,91 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         <p class="hint">
             This updates the active feed immediately for the running scraper. Existing cached rows will naturally refresh as new data arrives.
         </p>
+
+        <h2 class="subheading">Live Stream Layout</h2>
+        <form method="post" action="/config" id="stream_settings_form">
+            <input type="hidden" name="form_name" value="stream_settings">
+
+            <label for="stream_count">Number of Stream Panels</label>
+            <select id="stream_count" name="stream_count" required>
+                <option value="1" {% if stream_config.stream_count == 1 %}selected{% endif %}>1 stream</option>
+                <option value="2" {% if stream_config.stream_count == 2 %}selected{% endif %}>2 streams</option>
+                <option value="3" {% if stream_config.stream_count == 3 %}selected{% endif %}>3 streams</option>
+                <option value="4" {% if stream_config.stream_count == 4 %}selected{% endif %}>4 streams</option>
+            </select>
+
+            <label for="stream_layout">Layout</label>
+            <select id="stream_layout" name="stream_layout" required>
+                <option value="single" {% if stream_config.stream_layout == 'single' %}selected{% endif %}>Single Focus</option>
+                <option value="side-by-side" {% if stream_config.stream_layout == 'side-by-side' %}selected{% endif %}>Side by Side</option>
+                <option value="grid-2x2" {% if stream_config.stream_layout == 'grid-2x2' %}selected{% endif %}>2x2 Grid</option>
+            </select>
+
+            {% for idx in range(1, 5) %}
+            <div class="stream-row" data-stream-slot="{{ idx }}">
+                <label>Stream {{ idx }}</label>
+                <div class="stream-controls">
+                    <div>
+                        <label for="stream_court_{{ idx }}">Court</label>
+                        <select id="stream_court_{{ idx }}" name="stream_court_{{ idx }}">
+                            <option value="">No court assigned</option>
+                            {% for court in available_courts %}
+                            <option value="{{ court }}" {% if stream_config.stream_courts[idx - 1] == court %}selected{% endif %}>Court {{ court }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="stream_url_{{ idx }}">Video URL (optional)</label>
+                        <input
+                            id="stream_url_{{ idx }}"
+                            name="stream_url_{{ idx }}"
+                            type="text"
+                            placeholder="https://example.com/stream.m3u8"
+                            value="{{ stream_config.stream_urls[idx - 1] }}"
+                        >
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            <button class="btn" type="submit">Save Stream Layout</button>
+        </form>
+
+        <p class="hint">
+            Example: set 2 streams + Side by Side, then choose Court 5 and Court 6 to show those scoreboards in split view on Live Matches.
+        </p>
+
+        <h2 class="subheading">Bug Logo</h2>
+        <form method="post" action="/config" enctype="multipart/form-data">
+            <input type="hidden" name="form_name" value="bug_logo">
+            <label for="bug_logo">Upload Logo Image</label>
+            <input id="bug_logo" name="bug_logo" type="file" accept="image/*" required>
+            {% if bug_logo_url %}
+            <div class="logo-preview">
+                <img src="{{ bug_logo_url }}" alt="Current bug logo">
+                <div class="hint" style="margin: 0;">Current uploaded logo</div>
+            </div>
+            {% endif %}
+            <button class="btn" type="submit">Upload Logo</button>
+        </form>
     </div>
 </div>
+<script>
+    (function () {
+        const streamCountSelect = document.getElementById('stream_count');
+        const streamRows = Array.from(document.querySelectorAll('[data-stream-slot]'));
+
+        function syncVisibleStreamRows() {
+            const streamCount = parseInt(streamCountSelect.value, 10) || 1;
+            streamRows.forEach(function (row) {
+                const slot = parseInt(row.getAttribute('data-stream-slot'), 10);
+                row.style.display = slot <= streamCount ? 'grid' : 'none';
+            });
+        }
+
+        streamCountSelect.addEventListener('change', syncVisibleStreamRows);
+        syncVisibleStreamRows();
+    })();
+</script>
 </body>
 </html>

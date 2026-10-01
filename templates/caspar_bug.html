@@ -81,6 +81,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             opacity: 0;
             transform: translateX(-40px);
             transition: opacity 0.35s ease, transform 0.35s ease;
+            width: max-content;
+            min-width: 0;
         }
 
         #bug.visible {
@@ -99,7 +101,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             align-items: center;
             column-gap: 12px;
             padding: 4px 10px;
-            min-width: 520px;
+            min-width: 0;
+            width: max-content;
             background: var(--row-bg);
         }
 
@@ -237,7 +240,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             grid-auto-rows: 30px;
             gap: 4px 8px;
             align-items: center;
-            min-width: 520px;
+            min-width: 0;
+            width: max-content;
             padding: 6px 10px;
             background: transparent;
         }
@@ -254,6 +258,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             display: flex;
             align-items: center;
             justify-content: flex-end;
+        }
+
+        .sets-row {
+            width: max-content;
         }
 
         /* Animations for score change / serve change */
@@ -298,24 +306,36 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             display: block;
         }
     </style>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/caspar_bug.css') }}">
 </head>
 
-<body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}">
+<body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}" data-bug-court="{{ bug_court or '' }}">
 <div id="canvas">
     <div id="safe-container">
-        <div id="bug" class="hidden">
-            <!-- rows injected via JS -->
-        </div>
+        <div id="bug-shell">
+            {% if bug_logo_url %}
+            <div id="bug-logo-wrap">
+                <img id="bug-logo" src="{{ bug_logo_url }}" alt="Bug logo">
+            </div>
+            {% endif %}
 
-        <div id="debug-info">
-            {% if debug_mode %}
-            Debug mode is ON.
-            {% if not match_data %}
-            No initial match_data passed – waiting for WebSocket updates.
-            {% else %}
-            Showing initial match: {{ match_data.matchid }} ({{ match_data.player1 }} vs {{ match_data.player2 }})
-            {% endif %}
-            {% endif %}
+            <div id="bug-and-debug">
+                <div id="bug" class="hidden">
+                    <!-- rows injected via JS -->
+                </div>
+
+                <div id="debug-info">
+                    {% if debug_mode %}
+                    Debug mode is ON.
+                    {% if not match_data %}
+                    No initial match_data passed – waiting for WebSocket updates.
+                    {% else %}
+                    Showing initial match: {{ match_data.matchid }} ({{ match_data.player1 }} vs {{ match_data.player2 }})
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -325,6 +345,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 <script>
     // --- Template variables from Flask ---
     const debugMode = document.body.dataset.debugMode === '1';
+    const bugCourt = (document.body.dataset.bugCourt || '').trim();
     let initialMatchData = null;
     const initialDataNode = document.getElementById('bug-initial-data');
     if (initialDataNode && initialDataNode.textContent) {
@@ -584,13 +605,13 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         console.log("Bug overlay connected to Socket.IO.");
         // Subscribe to just this overlay's match/court so the server only sends
         // our own updates instead of broadcasting the full match list here.
-        if (currentMatchId) {
+        if (currentMatchId || bugCourt) {
             socket.emit("subscribe", {
-                matchid: currentMatchId,
-                court: (matchData && matchData.court) || ""
+                matchid: currentMatchId || "",
+                court: bugCourt || ((matchData && matchData.court) || "")
             });
         } else {
-            // No match resolved yet: fall back to full updates so we can latch on.
+            // No match or court resolved yet: fall back to full updates so we can latch on.
             socket.emit("subscribe_all");
         }
     });
@@ -611,6 +632,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         if (currentMatchId && String(m.matchid) !== String(currentMatchId)) {
             const st = (m.matchstatus || '').toUpperCase();
             const isLive = st.includes('IN PROGRESS') || st.includes('WARMUP') || st.includes('TEST');
+            if (bugCourt) {
+                const matchCourt = (String(m.court || '').match(/\d+/) || [null])[0];
+                if (matchCourt !== bugCourt) return;
+            }
             if (!isLive) return;
         }
 

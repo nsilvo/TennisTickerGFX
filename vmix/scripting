@@ -4,24 +4,27 @@
 ' Copyright © 2025 Nathan Silveston. All rights reserved.
 ' 
 ' Description: Automated serve indicator control that reads
-'              player2serve data from the tennis score API
-'              hosted at https://scores.nkpa.co.uk
-'              and displays the appropriate serve bug.
-'              MatchID is read from a text field in the
-'              specified SCOREBOARD title input.
+'              serve flags directly from the vMix data-source input
+'              after vMix has already populated the data source.
+'              The data source input must expose p1_serve and
+'              p2_serve text fields bound to the vMix feed.
 '
 ' Author: Nathan Silveston (nathan@nkpa.co.uk)
 ' Created: December 2025
 ' Version: 1.0
 ' 
-' Usage: Add this script to vMix and set SCOREBOARD and
-'        API_BASE_URL variables to match your setup.
+' Usage: Add this script to vMix. It will try to auto-detect the
+'        data source input from the live vMix XML state, and falls
+'        back to COURT 2 if needed.
 ' ============================================================
 
+Dim DATA_SOURCE_INPUT As String = "COURT 2"
 Dim SCOREBOARD As String = "SCOREBOARD"
-Dim API_BASE_URL As String = "https://scores.nkpa.co.uk/api/v1/match"
+Dim SERVE_1_SOURCE As String = "SERVE_1.source"
+Dim SERVE_2_SOURCE As String = "SERVE_2.source"
 Dim lastServeValue As String = ""
 Dim currentServeStatus As String = "unknown"
+Dim dataSourceInputKey As String = ""
 
 Console.WriteLine("========== SCRIPT INITIALIZED ==========")
 Console.WriteLine("[INIT] Serve indicator script starting...")
@@ -30,12 +33,12 @@ Console.WriteLine("[INIT] Serve indicator script starting...")
 Try
     Dim scoreboardInput = Input.Find(SCOREBOARD)
     If scoreboardInput IsNot Nothing Then
-        Console.WriteLine("[INIT] SCOREBOARD input found")
+        Console.WriteLine("[INIT] Scoreboard input found")
         Console.WriteLine("[INIT] Checking initial visibility states...")
-        Console.WriteLine("[INIT] SERVE_1.Source - Initial state: checking...")
-        Console.WriteLine("[INIT] SERVE_2.Source - Initial state: checking...")
+        Console.WriteLine("[INIT] " & SERVE_1_SOURCE & " - Initial state: checking...")
+        Console.WriteLine("[INIT] " & SERVE_2_SOURCE & " - Initial state: checking...")
     Else
-        Console.WriteLine("[INIT] WARNING: SCOREBOARD input not found at startup")
+        Console.WriteLine("[INIT] WARNING: scoreboard input not found at startup")
     End If
 Catch ex As Exception
     Console.WriteLine("[INIT] Error during startup check: " & ex.Message)
@@ -45,87 +48,365 @@ Console.WriteLine("[INIT] Script ready and monitoring for changes")
 Console.WriteLine("========================================")
 
 While True
-    System.Threading.Thread.Sleep(500)
+    System.Threading.Thread.Sleep(2000)
     Try
-        ' Get the scoreboard input to read the match ID
+        Console.WriteLine("[DEBUG] ----------------------------------------")
+        Console.WriteLine("[DEBUG] Poll cycle started")
+
+        ' Get the scoreboard target and the vMix data source input
         Dim scoreboardInput = Input.Find(SCOREBOARD)
+        Dim dataSourceInput = Nothing
+        Dim effectiveInputRef As String = SCOREBOARD
+
+        If scoreboardInput IsNot Nothing Then
+            Console.WriteLine("[DEBUG] Scoreboard input found: " & SCOREBOARD)
+        Else
+            Console.WriteLine("[DEBUG] Scoreboard input not found: " & SCOREBOARD)
+        End If
+
+        If dataSourceInputKey <> "" Then
+            Console.WriteLine("[DEBUG] Trying cached data source key: " & dataSourceInputKey)
+            dataSourceInput = Input.Find(dataSourceInputKey)
+            If dataSourceInput IsNot Nothing Then
+                effectiveInputRef = dataSourceInputKey
+                Console.WriteLine("[DEBUG] Cached data source key resolved successfully")
+            Else
+                Console.WriteLine("[DEBUG] Cached data source key did not resolve")
+            End If
+        End If
+
+        If dataSourceInput Is Nothing Then
+            Console.WriteLine("[DEBUG] Trying fallback data source name: " & DATA_SOURCE_INPUT)
+            dataSourceInput = Input.Find(DATA_SOURCE_INPUT)
+            If dataSourceInput IsNot Nothing Then
+                effectiveInputRef = DATA_SOURCE_INPUT
+                Console.WriteLine("[DEBUG] Fallback data source resolved by name")
+            Else
+                Console.WriteLine("[DEBUG] Fallback data source name not found")
+            End If
+        End If
+
+        If dataSourceInput Is Nothing Then
+            Console.WriteLine("[DEBUG] Scanning API.XML for p1_serve / p2_serve")
+            Dim vmixXml As String = API.XML()
+            Dim serveFieldIndex As Integer = vmixXml.IndexOf("name=" & """" & "p1_serve" & """")
+
+            If serveFieldIndex = -1 Then
+                serveFieldIndex = vmixXml.IndexOf("name=" & """" & "p2_serve" & """")
+            End If
+
+            Console.WriteLine("[DEBUG] Serve field index in XML: " & serveFieldIndex)
+
+            If serveFieldIndex > -1 Then
+                Dim inputStart As Integer = vmixXml.LastIndexOf("<input ", serveFieldIndex)
+                Dim inputEnd As Integer = vmixXml.IndexOf(">", serveFieldIndex)
+
+                Console.WriteLine("[DEBUG] XML input tag bounds: start=" & inputStart & ", end=" & inputEnd)
+
+                If inputStart > -1 AndAlso inputEnd > inputStart Then
+                    Dim inputTag As String = vmixXml.Substring(inputStart, inputEnd - inputStart + 1)
+                    Console.WriteLine("[DEBUG] XML input tag snippet: " & inputTag)
+                    Dim keyStart As Integer = inputTag.IndexOf("key=" & """")
+
+                    If keyStart > -1 Then
+                        keyStart = keyStart + 5
+                        Dim keyEnd As Integer = inputTag.IndexOf("""" , keyStart)
+
+                        Console.WriteLine("[DEBUG] XML key bounds: start=" & keyStart & ", end=" & keyEnd)
+
+                        If keyEnd > keyStart Then
+                            dataSourceInputKey = inputTag.Substring(keyStart, keyEnd - keyStart)
+                            Console.WriteLine("[INIT] Auto-detected data source input key: " & dataSourceInputKey)
+                            dataSourceInput = Input.Find(dataSourceInputKey)
+                            If dataSourceInput IsNot Nothing Then
+                                effectiveInputRef = dataSourceInputKey
+                                Console.WriteLine("[DEBUG] Auto-detected data source resolved successfully")
+                            Else
+                                Console.WriteLine("[DEBUG] Auto-detected data source key did not resolve")
+                            End If
+                        Else
+                            Console.WriteLine("[DEBUG] Could not locate key end in XML input tag")
+                        End If
+                    Else
+                        Console.WriteLine("[DEBUG] Could not locate key attribute in XML input tag")
+                    End If
+                End If
+            Else
+                Console.WriteLine("[DEBUG] No serve field markers found in API.XML")
+            End If
+        End If
         
-        If scoreboardInput Is Nothing Then
+        If dataSourceInput Is Nothing Then
+            Console.WriteLine("Data source input not found")
+        ElseIf scoreboardInput Is Nothing Then
             Console.WriteLine("Scoreboard input not found")
         Else
-            ' Read the match ID from the text field
-            Dim matchId As String = scoreboardInput.Text("MATCHID.Text")
-            
-            If String.IsNullOrEmpty(matchId) Then
-                Console.WriteLine("Match ID not found in scoreboard")
-            Else
-                ' Fetch the match data from the API using WebRequest
-                Dim url As String = API_BASE_URL & "/" & matchId
-                Dim client = System.Net.WebRequest.Create(url)
-                Dim response = client.GetResponse()
-                
-                If response IsNot Nothing Then
-                    Dim sr As System.IO.StreamReader = New System.IO.StreamReader(CType(response.GetResponseStream(), System.IO.Stream))
-                    Dim jsonContent As String = sr.ReadToEnd()
-                    sr.Close()
-                    
-                    ' Parse player2serve from JSON string manually
-                    Dim serveValue As String = ""
-                    Dim startIndex As Integer = jsonContent.IndexOf("""player2serve""")
-                    
-                    If startIndex > -1 Then
-                        startIndex = jsonContent.IndexOf(":", startIndex) + 1
-                        Dim endIndex As Integer = jsonContent.IndexOf(",", startIndex)
-                        If endIndex = -1 Then
-                            endIndex = jsonContent.IndexOf("}", startIndex)
-                        End If
-                        serveValue = jsonContent.Substring(startIndex, endIndex - startIndex).Trim()
-                        serveValue = serveValue.Replace("""", "").Trim()
-                    End If
-                    
-                    ' Only log and update if serve value changed
-                    If serveValue <> lastServeValue Then
-                        Console.WriteLine("[CHANGE] Serve value changed from '" & lastServeValue & "' to '" & serveValue & "'")
-                        lastServeValue = serveValue
-                        
-                        If serveValue = "1" Then
-                            ' Player 1 (TOP) is serving
-                            Console.WriteLine("[ACTION] Player 1 serving detected")
-                            Console.WriteLine("[VISIBLE] Showing SERVE_1.Source")
-                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: VISIBLE")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
-                            currentServeStatus = "Player 1"
-                        ElseIf serveValue = "2" Then
-                            ' Player 2 (BOTTOM) is serving
-                            Console.WriteLine("[ACTION] Player 2 serving detected")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
-                            Console.WriteLine("[VISIBLE] Showing SERVE_2.Source")
-                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: VISIBLE")
-                            currentServeStatus = "Player 2"
-                        Else
-                            ' No serve data - hide both
-                            Console.WriteLine("[ACTION] No serve data or invalid value")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
-                            currentServeStatus = "None"
-                        End If
-                        Console.WriteLine("[UPDATE] Current status now: " & currentServeStatus)
-                    End If
-                    
-                    response.Close()
-                Else
-                    Console.WriteLine("Error fetching match data")
+            Console.WriteLine("[DEBUG] Reading serve values from input reference: " & effectiveInputRef)
+            Dim p1ServeText As String = ""
+            Dim p2ServeText As String = ""
+            Dim serveInputRef As String = effectiveInputRef
+            Dim player2ServeNumeric As String = ""
+            Try
+                p1ServeText = dataSourceInput.Text("p1_serve")
+                Console.WriteLine("[DEBUG] Raw p1_serve text: '" & p1ServeText & "'")
+            Catch ex As Exception
+                p1ServeText = ""
+                Console.WriteLine("[DEBUG] Error reading p1_serve: " & ex.Message)
+            End Try
+            If p1ServeText.Trim() = "" Then
+                Try
+                    p1ServeText = dataSourceInput.Text("p1_serve.Text")
+                    Console.WriteLine("[DEBUG] Raw p1_serve.Text: '" & p1ServeText & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading p1_serve.Text: " & ex.Message)
+                End Try
+            End If
+            Try
+                p2ServeText = dataSourceInput.Text("p2_serve")
+                Console.WriteLine("[DEBUG] Raw p2_serve text: '" & p2ServeText & "'")
+            Catch ex As Exception
+                p2ServeText = ""
+                Console.WriteLine("[DEBUG] Error reading p2_serve: " & ex.Message)
+            End Try
+            If p2ServeText.Trim() = "" Then
+                Try
+                    p2ServeText = dataSourceInput.Text("p2_serve.Text")
+                    Console.WriteLine("[DEBUG] Raw p2_serve.Text: '" & p2ServeText & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading p2_serve.Text: " & ex.Message)
+                End Try
+            End If
+            Try
+                player2ServeNumeric = dataSourceInput.Text("player2serve")
+                Console.WriteLine("[DEBUG] Raw player2serve text: '" & player2ServeNumeric & "'")
+            Catch ex As Exception
+                player2ServeNumeric = ""
+                Console.WriteLine("[DEBUG] Error reading player2serve: " & ex.Message)
+            End Try
+            If player2ServeNumeric.Trim() = "" Then
+                Try
+                    player2ServeNumeric = dataSourceInput.Text("player2serve.Text")
+                    Console.WriteLine("[DEBUG] Raw player2serve.Text: '" & player2ServeNumeric & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading player2serve.Text: " & ex.Message)
+                End Try
+            End If
+
+            If p1ServeText.Trim() = "" AndAlso p2ServeText.Trim() = "" AndAlso player2ServeNumeric.Trim() = "" AndAlso scoreboardInput IsNot Nothing AndAlso Not Object.ReferenceEquals(scoreboardInput, dataSourceInput) Then
+                Console.WriteLine("[DEBUG] Primary input returned empty serve fields; probing scoreboard input as fallback")
+                Try
+                    p1ServeText = scoreboardInput.Text("p1_serve")
+                    Console.WriteLine("[DEBUG] Fallback raw p1_serve text from scoreboard: '" & p1ServeText & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading fallback p1_serve from scoreboard: " & ex.Message)
+                End Try
+                If p1ServeText.Trim() = "" Then
+                    Try
+                        p1ServeText = scoreboardInput.Text("p1_serve.Text")
+                        Console.WriteLine("[DEBUG] Fallback raw p1_serve.Text from scoreboard: '" & p1ServeText & "'")
+                    Catch ex As Exception
+                        Console.WriteLine("[DEBUG] Error reading fallback p1_serve.Text from scoreboard: " & ex.Message)
+                    End Try
                 End If
+                Try
+                    p2ServeText = scoreboardInput.Text("p2_serve")
+                    Console.WriteLine("[DEBUG] Fallback raw p2_serve text from scoreboard: '" & p2ServeText & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading fallback p2_serve from scoreboard: " & ex.Message)
+                End Try
+                If p2ServeText.Trim() = "" Then
+                    Try
+                        p2ServeText = scoreboardInput.Text("p2_serve.Text")
+                        Console.WriteLine("[DEBUG] Fallback raw p2_serve.Text from scoreboard: '" & p2ServeText & "'")
+                    Catch ex As Exception
+                        Console.WriteLine("[DEBUG] Error reading fallback p2_serve.Text from scoreboard: " & ex.Message)
+                    End Try
+                End If
+                Try
+                    player2ServeNumeric = scoreboardInput.Text("player2serve")
+                    Console.WriteLine("[DEBUG] Fallback raw player2serve from scoreboard: '" & player2ServeNumeric & "'")
+                Catch ex As Exception
+                    Console.WriteLine("[DEBUG] Error reading fallback player2serve from scoreboard: " & ex.Message)
+                End Try
+                If player2ServeNumeric.Trim() = "" Then
+                    Try
+                        player2ServeNumeric = scoreboardInput.Text("player2serve.Text")
+                        Console.WriteLine("[DEBUG] Fallback raw player2serve.Text from scoreboard: '" & player2ServeNumeric & "'")
+                    Catch ex As Exception
+                        Console.WriteLine("[DEBUG] Error reading fallback player2serve.Text from scoreboard: " & ex.Message)
+                    End Try
+                End If
+                serveInputRef = SCOREBOARD
+            End If
+
+            If p1ServeText.Trim() = "" AndAlso p2ServeText.Trim() = "" AndAlso player2ServeNumeric.Trim() = "" Then
+                Console.WriteLine("[DEBUG] Attempting XML-level serve field extraction")
+                Dim vmixXml As String = API.XML()
+                Dim inputAnchor As Integer = -1
+
+                If dataSourceInputKey <> "" Then
+                    inputAnchor = vmixXml.IndexOf("key=" & """" & dataSourceInputKey & """")
+                    Console.WriteLine("[DEBUG] XML search by key: " & dataSourceInputKey & " -> " & inputAnchor)
+                End If
+
+                If inputAnchor = -1 Then
+                    inputAnchor = vmixXml.IndexOf("title=" & """" & serveInputRef & """")
+                    Console.WriteLine("[DEBUG] XML search by title: " & serveInputRef & " -> " & inputAnchor)
+                End If
+
+                If inputAnchor > -1 Then
+                    Dim inputBlockStart As Integer = vmixXml.LastIndexOf("<input ", inputAnchor)
+                    Dim inputBlockEnd As Integer = vmixXml.IndexOf("</input>", inputAnchor)
+
+                    Console.WriteLine("[DEBUG] XML input block bounds: start=" & inputBlockStart & ", end=" & inputBlockEnd)
+
+                    If inputBlockStart > -1 AndAlso inputBlockEnd > inputBlockStart Then
+                        Dim inputBlock As String = vmixXml.Substring(inputBlockStart, inputBlockEnd - inputBlockStart)
+                        Console.WriteLine("[DEBUG] XML input block snippet: " & inputBlock)
+
+                        Dim p1Marker As Integer = inputBlock.IndexOf("name=" & """" & "p1_serve" & """")
+                        If p1Marker > -1 Then
+                            Dim p1ValueStart As Integer = inputBlock.IndexOf(">", p1Marker)
+                            Dim p1ValueEnd As Integer = inputBlock.IndexOf("<", p1ValueStart + 1)
+                            If p1ValueStart > -1 AndAlso p1ValueEnd > p1ValueStart Then
+                                p1ServeText = inputBlock.Substring(p1ValueStart + 1, p1ValueEnd - p1ValueStart - 1)
+                                Console.WriteLine("[DEBUG] XML p1_serve text: '" & p1ServeText & "'")
+                            End If
+                        Else
+                            Console.WriteLine("[DEBUG] XML p1_serve marker not found in input block")
+                        End If
+
+                        If p1ServeText.Trim() = "" Then
+                            Dim p1TextMarker As Integer = inputBlock.IndexOf("name=" & """" & "p1_serve.Text" & """")
+                            If p1TextMarker > -1 Then
+                                Dim p1TextStart As Integer = inputBlock.IndexOf(">", p1TextMarker)
+                                Dim p1TextEnd As Integer = inputBlock.IndexOf("<", p1TextStart + 1)
+                                If p1TextStart > -1 AndAlso p1TextEnd > p1TextStart Then
+                                    p1ServeText = inputBlock.Substring(p1TextStart + 1, p1TextEnd - p1TextStart - 1)
+                                    Console.WriteLine("[DEBUG] XML p1_serve.Text text: '" & p1ServeText & "'")
+                                End If
+                            End If
+                        End If
+
+                        Dim p2Marker As Integer = inputBlock.IndexOf("name=" & """" & "p2_serve" & """")
+                        If p2Marker > -1 Then
+                            Dim p2ValueStart As Integer = inputBlock.IndexOf(">", p2Marker)
+                            Dim p2ValueEnd As Integer = inputBlock.IndexOf("<", p2ValueStart + 1)
+                            If p2ValueStart > -1 AndAlso p2ValueEnd > p2ValueStart Then
+                                p2ServeText = inputBlock.Substring(p2ValueStart + 1, p2ValueEnd - p2ValueStart - 1)
+                                Console.WriteLine("[DEBUG] XML p2_serve text: '" & p2ServeText & "'")
+                            End If
+                        Else
+                            Console.WriteLine("[DEBUG] XML p2_serve marker not found in input block")
+                        End If
+
+                        If p2ServeText.Trim() = "" Then
+                            Dim p2TextMarker As Integer = inputBlock.IndexOf("name=" & """" & "p2_serve.Text" & """")
+                            If p2TextMarker > -1 Then
+                                Dim p2TextStart As Integer = inputBlock.IndexOf(">", p2TextMarker)
+                                Dim p2TextEnd As Integer = inputBlock.IndexOf("<", p2TextStart + 1)
+                                If p2TextStart > -1 AndAlso p2TextEnd > p2TextStart Then
+                                    p2ServeText = inputBlock.Substring(p2TextStart + 1, p2TextEnd - p2TextStart - 1)
+                                    Console.WriteLine("[DEBUG] XML p2_serve.Text text: '" & p2ServeText & "'")
+                                End If
+                            End If
+                        End If
+
+                        If player2ServeNumeric.Trim() = "" Then
+                            Dim p2NumMarker As Integer = inputBlock.IndexOf("name=" & """" & "player2serve" & """")
+                            If p2NumMarker = -1 Then
+                                p2NumMarker = inputBlock.IndexOf("name=" & """" & "player2serve.Text" & """")
+                            End If
+                            If p2NumMarker > -1 Then
+                                Dim p2NumStart As Integer = inputBlock.IndexOf(">", p2NumMarker)
+                                Dim p2NumEnd As Integer = inputBlock.IndexOf("<", p2NumStart + 1)
+                                If p2NumStart > -1 AndAlso p2NumEnd > p2NumStart Then
+                                    player2ServeNumeric = inputBlock.Substring(p2NumStart + 1, p2NumEnd - p2NumStart - 1)
+                                    Console.WriteLine("[DEBUG] XML player2serve text: '" & player2ServeNumeric & "'")
+                                End If
+                            Else
+                                Console.WriteLine("[DEBUG] XML player2serve marker not found in input block")
+                            End If
+                        End If
+                    End If
+                Else
+                    Console.WriteLine("[DEBUG] XML input block anchor not found")
+                End If
+            End If
+
+            Console.WriteLine("[DEBUG] Serve fields were read from: " & serveInputRef)
+
+            Dim serveValue As String = ""
+
+            Dim p1Normalized As String = p1ServeText.Trim().ToLower()
+            Dim p2Normalized As String = p2ServeText.Trim().ToLower()
+            Dim p2ServeNumNormalized As String = player2ServeNumeric.Trim().ToLower()
+
+            Console.WriteLine("[DEBUG] Normalized p1_serve: '" & p1Normalized & "'")
+            Console.WriteLine("[DEBUG] Normalized p2_serve: '" & p2Normalized & "'")
+            Console.WriteLine("[DEBUG] Normalized player2serve: '" & p2ServeNumNormalized & "'")
+
+            If p2ServeNumNormalized = "1" Then
+                serveValue = "1"
+                Console.WriteLine("[DEBUG] Serve decision: player 1 active via player2serve")
+            ElseIf p2ServeNumNormalized = "2" Then
+                serveValue = "2"
+                Console.WriteLine("[DEBUG] Serve decision: player 2 active via player2serve")
+            ElseIf p1Normalized <> "" AndAlso p1Normalized <> "0" AndAlso p1Normalized <> "false" AndAlso p1Normalized <> "off" AndAlso p1Normalized <> "none" AndAlso p1Normalized <> "-" Then
+                serveValue = "1"
+                Console.WriteLine("[DEBUG] Serve decision: player 1 active")
+            ElseIf p1ServeText = "●" OrElse p1ServeText = "•" OrElse p2ServeText = "●" OrElse p2ServeText = "•" Then
+                If p1ServeText = "●" OrElse p1ServeText = "•" Then
+                    serveValue = "1"
+                    Console.WriteLine("[DEBUG] Serve decision: player 1 active via dot marker")
+                Else
+                    serveValue = "2"
+                    Console.WriteLine("[DEBUG] Serve decision: player 2 active via dot marker")
+                End If
+            ElseIf p2Normalized <> "" AndAlso p2Normalized <> "0" AndAlso p2Normalized <> "false" AndAlso p2Normalized <> "off" AndAlso p2Normalized <> "none" AndAlso p2Normalized <> "-" Then
+                serveValue = "2"
+                Console.WriteLine("[DEBUG] Serve decision: player 2 active")
+            Else
+                Console.WriteLine("[DEBUG] Serve decision: no active serve detected")
+            End If
+
+            ' Only log and update if serve value changed
+            If serveValue <> lastServeValue Then
+                Console.WriteLine("[CHANGE] Serve value changed from '" & lastServeValue & "' to '" & serveValue & "'")
+                lastServeValue = serveValue
+
+                If serveValue = "1" Then
+                    Console.WriteLine("[ACTION] Player 1 serving detected")
+                    Console.WriteLine("[VISIBLE] Showing " & SERVE_1_SOURCE)
+                    API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:=SERVE_1_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_1_SOURCE & " is now: VISIBLE")
+                    Console.WriteLine("[HIDDEN] Hiding " & SERVE_2_SOURCE)
+                    API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:=SERVE_2_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_2_SOURCE & " is now: HIDDEN")
+                    currentServeStatus = "Player 1"
+                ElseIf serveValue = "2" Then
+                    Console.WriteLine("[ACTION] Player 2 serving detected")
+                    Console.WriteLine("[HIDDEN] Hiding " & SERVE_1_SOURCE)
+                    API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:=SERVE_1_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_1_SOURCE & " is now: HIDDEN")
+                    Console.WriteLine("[VISIBLE] Showing " & SERVE_2_SOURCE)
+                    API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:=SERVE_2_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_2_SOURCE & " is now: VISIBLE")
+                    currentServeStatus = "Player 2"
+                Else
+                    ' No serve data - hide both serve images
+                    Console.WriteLine("[ACTION] No serve data or invalid value")
+                    Console.WriteLine("[HIDDEN] Hiding " & SERVE_1_SOURCE)
+                    API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:=SERVE_1_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_1_SOURCE & " is now: HIDDEN")
+                    Console.WriteLine("[HIDDEN] Hiding " & SERVE_2_SOURCE)
+                    API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:=SERVE_2_SOURCE)
+                    Console.WriteLine("[STATE] " & SERVE_2_SOURCE & " is now: HIDDEN")
+                    currentServeStatus = "None"
+                End If
+                Console.WriteLine("[UPDATE] Current status now: " & currentServeStatus)
+            Else
+                Console.WriteLine("[DEBUG] Serve value unchanged: '" & serveValue & "'")
             End If
         End If
         

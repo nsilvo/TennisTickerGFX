@@ -87,8 +87,7 @@ For a **single-court GT scoreboard**, point the data source at
 
 ## 4. Serve indicator script (`scripting`)
 
-The polling VB script that parses `player2serve` out of raw JSON is now
-optional: `p1_serve` / `p2_serve` arrive as ready-made `●` text fields via the
-data source. Keep the script only if you prefer image-based serve indicators
-(`SERVE_1.Source` visibility) — in that case it can be simplified to read the
-data source instead of hand-parsing JSON.
+The polling VB script now reads the serve fields directly from the vMix title
+input after vMix has populated its data source. Expose `p1_serve` and
+`p2_serve` on the scoreboard input, and the script will use those fields to
+toggle `SERVE_1.source` and `SERVE_2.source`.

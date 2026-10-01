@@ -960,7 +960,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             ? match.winner_name.trim()
             : null;
 
-        const casparBugUrl = `/caspar/bug/?matchid=${encodeURIComponent(matchId)}`;
+        const bugCourt = (match.court || '').toString().match(/\d+/);
+        const casparBugUrl = bugCourt
+            ? `/caspar/bug/?court=${encodeURIComponent(bugCourt[0])}`
+            : `/caspar/bug/?matchid=${encodeURIComponent(matchId)}`;
         const casparScoreboardUrl = `/caspar/scoreboard/?matchid=${encodeURIComponent(matchId)}`;
 
         // Common header and actions

@@ -18,6 +18,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from threading import Thread, Lock
+from werkzeug.utils import secure_filename
 from flask import (
     Flask, jsonify, request, render_template, make_response,
     session, redirect, url_for
@@ -44,6 +45,15 @@ TT_CONTRACT = os.getenv("TT_CONTRACT") or "ONSIDEPROD"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 MAX_SETS = 11
+MAX_STREAM_SLOTS = 4
+DEFAULT_STREAM_COUNT = 2
+DEFAULT_STREAM_LAYOUT = "side-by-side"
+ALLOWED_STREAM_LAYOUTS = {"single", "side-by-side", "grid-2x2"}
+DEFAULT_STREAM_COURTS = ["5", "6", "7", "8"]
+DEFAULT_STREAM_URLS = ["", "", "", ""]
+BUG_LOGO_UPLOAD_DIR = os.path.join("static", "uploads", "caspar_bug")
+BUG_LOGO_SETTING_KEY = "caspar_bug_logo"
+ALLOWED_BUG_LOGO_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 # --- End Configuration ---
 
 app = Flask(__name__)
@@ -816,11 +826,18 @@ def continuous_scraper_loop():
 # ====================================================================
 # Helper: Resolve match for overlays
 # ====================================================================
-def resolve_match(matchid, auto_single_live=False, fallback_any=False):
+def normalize_court_number(court_value):
+    """Extract the numeric court token from a raw court label."""
+    court_match = re.search(r"(\d+)", str(court_value or ""))
+    return court_match.group(1) if court_match else ""
+
+
+def resolve_match(matchid=None, court=None, auto_single_live=False, fallback_any=False):
     """
     Resolve a match object from the cache:
 
     - If matchid is provided and found → return that.
+    - If court is provided, return the best match on that court.
     - Else if auto_single_live=True and exactly ONE live match → return that.
     - Else if fallback_any=True → return first live; if none, first overall.
     - Else → return None.
@@ -829,6 +846,41 @@ def resolve_match(matchid, auto_single_live=False, fallback_any=False):
         return None
 
     all_matches = manager.get_latest_data()
+
+    court_number = normalize_court_number(court)
+
+    if court_number:
+        court_matches = [
+            x for x in all_matches
+            if normalize_court_number(x.get("court")) == court_number
+        ]
+
+        if court_matches:
+            live = [
+                x for x in court_matches
+                if "IN PROGRESS" in str(x.get("matchstatus", "")).upper()
+                or "TEST" in str(x.get("matchstatus", "")).upper()
+                or "WARMUP" in str(x.get("matchstatus", "")).upper()
+            ]
+            if live:
+                return live[0]
+
+            upcoming = [
+                x for x in court_matches
+                if x.get("is_plan") or "UPCOMING" in str(x.get("matchstatus", "")).upper()
+            ]
+            if upcoming:
+                return sorted(upcoming, key=lambda x: str(x.get("schedtime") or ""))[0]
+
+            completed = [
+                x for x in court_matches
+                if x.get("winner_name") or "COMPLETED" in str(x.get("matchstatus", "")).upper()
+                or "FINISHED" in str(x.get("matchstatus", "")).upper()
+            ]
+            if completed:
+                return sorted(completed, key=lambda x: x.get("timestamp") or 0, reverse=True)[0]
+
+            return court_matches[0]
 
     # 1) Explicit matchid
     if matchid:
@@ -882,6 +934,158 @@ def update_tournament_id(new_tour_id):
 
     return True, f"Scraper is now tracking Tournament ID: {candidate}", 200
 
+
+def get_live_stream_config():
+    """Read stream layout settings from persisted config (with safe defaults)."""
+    stream_count = DEFAULT_STREAM_COUNT
+    stream_layout = DEFAULT_STREAM_LAYOUT
+    stream_courts = DEFAULT_STREAM_COURTS.copy()
+    stream_urls = DEFAULT_STREAM_URLS.copy()
+
+    if manager:
+        count_raw = manager.get_setting("stream_count")
+        try:
+            if count_raw is not None:
+                stream_count = int(count_raw)
+        except (TypeError, ValueError):
+            pass
+
+        layout_raw = (manager.get_setting("stream_layout") or "").strip().lower()
+        if layout_raw in ALLOWED_STREAM_LAYOUTS:
+            stream_layout = layout_raw
+
+        for idx in range(MAX_STREAM_SLOTS):
+            saved_court = (manager.get_setting(f"stream_court_{idx + 1}") or "").strip()
+            if saved_court:
+                stream_courts[idx] = saved_court
+            saved_url = (manager.get_setting(f"stream_url_{idx + 1}") or "").strip()
+            if saved_url:
+                stream_urls[idx] = saved_url
+
+    stream_count = max(1, min(MAX_STREAM_SLOTS, int(stream_count)))
+    if stream_layout not in ALLOWED_STREAM_LAYOUTS:
+        stream_layout = DEFAULT_STREAM_LAYOUT
+
+    return {
+        "stream_count": stream_count,
+        "stream_layout": stream_layout,
+        "stream_courts": stream_courts,
+        "stream_urls": stream_urls,
+    }
+
+
+def get_available_court_numbers():
+    """Return sorted court numbers inferred from cached matches for config dropdowns."""
+    default_numbers = sorted({int(c) for c in DEFAULT_STREAM_COURTS if c.isdigit()})
+    numbers = set(default_numbers)
+
+    if not manager:
+        return [str(n) for n in sorted(numbers)]
+
+    try:
+        all_matches = manager.get_latest_data()
+        for match in all_matches:
+            court_raw = str(match.get("court") or "")
+            court_match = re.search(r"(\d+)", court_raw)
+            if court_match:
+                numbers.add(int(court_match.group(1)))
+    except Exception as e:
+        print(f"Error collecting court numbers for config: {e}")
+
+    return [str(n) for n in sorted(numbers)]
+
+
+def save_live_stream_config_from_form(form):
+    """Validate and persist stream layout settings from the config page."""
+    if not manager:
+        return False, "Stream settings can only be saved while the scraper manager is running."
+
+    count_raw = (form.get("stream_count") or "").strip()
+    layout_raw = (form.get("stream_layout") or "").strip().lower()
+
+    if not count_raw.isdigit():
+        return False, "Stream count must be a numeric value between 1 and 4."
+
+    stream_count = int(count_raw)
+    if stream_count < 1 or stream_count > MAX_STREAM_SLOTS:
+        return False, "Stream count must be between 1 and 4."
+
+    if layout_raw not in ALLOWED_STREAM_LAYOUTS:
+        return False, "Invalid layout selected."
+
+    stream_courts = []
+    stream_urls = []
+    for idx in range(MAX_STREAM_SLOTS):
+        raw_court = (form.get(f"stream_court_{idx + 1}") or "").strip()
+        if raw_court and not raw_court.isdigit():
+            return False, f"Court selection for stream {idx + 1} must be numeric."
+        stream_courts.append(raw_court)
+
+        raw_url = (form.get(f"stream_url_{idx + 1}") or "").strip()
+        if raw_url:
+            parsed = urlparse(raw_url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                return False, f"Stream {idx + 1} URL must be a valid http(s) URL."
+        stream_urls.append(raw_url)
+
+    manager.save_setting("stream_count", str(stream_count))
+    manager.save_setting("stream_layout", layout_raw)
+    for idx, court_value in enumerate(stream_courts, start=1):
+        manager.save_setting(f"stream_court_{idx}", court_value)
+    for idx, url_value in enumerate(stream_urls, start=1):
+        manager.save_setting(f"stream_url_{idx}", url_value)
+
+    return True, "Saved stream layout, court assignments and stream URLs."
+
+
+def get_bug_logo_url():
+    """Return the uploaded bug logo URL if one has been configured."""
+    if not manager:
+        return None
+
+    logo_filename = (manager.get_setting(BUG_LOGO_SETTING_KEY) or "").strip()
+    if not logo_filename:
+        return None
+
+    logo_path = os.path.join(app.root_path, BUG_LOGO_UPLOAD_DIR, logo_filename)
+    if not os.path.exists(logo_path):
+        return None
+
+    return url_for("static", filename=f"uploads/caspar_bug/{logo_filename}")
+
+
+def save_bug_logo_upload(uploaded_file):
+    """Persist an uploaded logo for the Caspar bug overlay."""
+    if not manager:
+        return False, "Logo uploads require the scraper manager to be running."
+
+    if uploaded_file is None or not uploaded_file.filename:
+        return False, "Choose a logo image to upload."
+
+    filename = secure_filename(uploaded_file.filename)
+    if "." not in filename:
+        return False, "Logo file must have an image extension."
+
+    extension = filename.rsplit(".", 1)[1].lower()
+    if extension not in ALLOWED_BUG_LOGO_EXTENSIONS:
+        return False, "Logo must be a PNG, JPG, JPEG, GIF, or WEBP file."
+
+    upload_dir = os.path.join(app.root_path, BUG_LOGO_UPLOAD_DIR)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    for existing_name in os.listdir(upload_dir):
+        if existing_name.startswith("caspar_bug_logo."):
+            try:
+                os.remove(os.path.join(upload_dir, existing_name))
+            except OSError:
+                pass
+
+    stored_filename = f"caspar_bug_logo.{extension}"
+    uploaded_file.save(os.path.join(upload_dir, stored_filename))
+    manager.save_setting(BUG_LOGO_SETTING_KEY, stored_filename)
+
+    return True, "Saved bug logo image."
+
 @app.route('/', methods=['GET'])
 def index():
     """API Index: Renders the static HTML page with SocketIO connection for live updates."""
@@ -903,7 +1107,14 @@ def live_matches():
         tour_id = CURRENT_TOURNAMENT_ID
         interval = SCRAPE_INTERVAL
 
-    response = make_response(render_template('live_matches.html', tournament_id=tour_id, scrape_interval=interval))
+    stream_config = get_live_stream_config()
+
+    response = make_response(render_template(
+        'live_matches.html',
+        tournament_id=tour_id,
+        scrape_interval=interval,
+        stream_config=stream_config
+    ))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -942,21 +1153,43 @@ def config_page():
     error = None
 
     if request.method == 'POST':
-        new_tour_id = request.form.get('tournament_id', '').strip()
-        ok, msg, _status = update_tournament_id(new_tour_id)
-        if ok:
-            message = msg
+        form_name = (request.form.get('form_name') or '').strip().lower()
+
+        if form_name == 'stream_settings':
+            ok, msg = save_live_stream_config_from_form(request.form)
+            if ok:
+                message = msg
+            else:
+                error = msg
+        elif form_name == 'bug_logo':
+            ok, msg = save_bug_logo_upload(request.files.get('bug_logo'))
+            if ok:
+                message = msg
+            else:
+                error = msg
         else:
-            error = msg
+            new_tour_id = request.form.get('tournament_id', '').strip()
+            ok, msg, _status = update_tournament_id(new_tour_id)
+            if ok:
+                message = msg
+            else:
+                error = msg
 
     with state_lock:
         tour_id = CURRENT_TOURNAMENT_ID
         interval = SCRAPE_INTERVAL
 
+    stream_config = get_live_stream_config()
+    available_courts = get_available_court_numbers()
+    bug_logo_url = get_bug_logo_url()
+
     response = make_response(render_template(
         'config.html',
         tournament_id=tour_id,
         scrape_interval=interval,
+        stream_config=stream_config,
+        available_courts=available_courts,
+        bug_logo_url=bug_logo_url,
         message=message,
         error=error
     ))
@@ -1419,15 +1652,19 @@ def caspar_bug():
       - Else → no match data (template can handle debug/empty state).
     """
     matchid = request.args.get("matchid")
+    court = request.args.get("court")
     debug_mode = request.args.get("debug", "0") == "1"
 
     # auto_single_live=True, fallback_any=False for bug
-    match_data = resolve_match(matchid, auto_single_live=True, fallback_any=False)
+    match_data = resolve_match(matchid=matchid, court=court, auto_single_live=True, fallback_any=False)
+    bug_logo_url = get_bug_logo_url()
 
     return render_template(
         "caspar_bug.html",
         match_data=match_data,
-        debug_mode=debug_mode
+        debug_mode=debug_mode,
+        bug_logo_url=bug_logo_url,
+        bug_court=normalize_court_number(court or (match_data or {}).get("court"))
     )
 
 
@@ -1485,14 +1722,21 @@ def handle_subscribe(data):
 
     print(f"Client {request.sid} subscribed to match='{matchid}' court='{court}'")
 
-    if manager and matchid:
+    if manager and (matchid or court):
         try:
-            m = next((x for x in manager.get_latest_data()
-                      if str(x.get('matchid')) == matchid), None)
-            if m:
+            snapshot = None
+            if matchid:
+                snapshot = next((x for x in manager.get_latest_data()
+                                 if str(x.get('matchid')) == matchid), None)
+            if snapshot is None and court:
+                court_number = normalize_court_number(court)
+                if court_number:
+                    snapshot = resolve_match(court=court_number, auto_single_live=True, fallback_any=True)
+
+            if snapshot:
                 emit('match_update', {
                     "timestamp": datetime.now().strftime('%H:%M:%S'),
-                    "match": m
+                    "match": snapshot
                 })
         except Exception as e:
             print(f"Error sending subscribe snapshot to {request.sid}: {e}")

@@ -293,19 +293,20 @@ curl -X POST http://localhost:5000/api/v1/tourid/7140 | jq</code></pre>
     <div class="block">
         <p>Overlays pick a match in this order:</p>
         <ul>
+            <li><code>?court=5</code> in the bug URL targets the best match on that court.</li>
             <li><code>?matchid=123</code> in the URL forces that match (if it exists).</li>
             <li>No matchid + exactly one live or warm-up match ⇒ that match is used automatically.</li>
             <li>Multiple live matches without matchid ⇒ overlays may stay empty; pass a matchid.</li>
         </ul>
         <p><strong>Examples:</strong></p>
         <pre><code>Scoreboard: /caspar/scoreboard/?matchid=12345
-Bug:        /caspar/bug/?matchid=12345
+Bug:        /caspar/bug/?court=5
 
 # Quick links from dashboard cards:
-# - Bug button: adds matchid automatically
+# - Bug button: adds court automatically when available
 # - Scoreboard button: adds matchid automatically
 </code></pre>
-        <p><strong>Tip:</strong> Use the dashboard card buttons (“Bug” or “Scoreboard”) to open the overlay with matchid pre-filled.</p>
+        <p><strong>Tip:</strong> Use the dashboard card buttons (“Bug” or “Scoreboard”) to open the overlay with the right court or match pre-filled.</p>
     </div>
 
     <h2>🎛 vMix Serve Script Guide</h2>
@@ -319,7 +320,7 @@ Bug:        /caspar/bug/?matchid=12345
         <ul>
             <li>A title input named <code>SCOREBOARD</code> (or change <code>SCOREBOARD</code> variable in script).</li>
             <li>A text field in that title called <code>MATCHID.Text</code> containing the current match ID.</li>
-            <li>Two image layers named <code>SERVE_1.Source</code> and <code>SERVE_2.Source</code>.</li>
+            <li>Two image layers named <code>SERVE_1.source</code> and <code>SERVE_2.source</code>.</li>
         </ul>
 
         <p><strong>How to install and run in vMix</strong></p>
@@ -327,7 +328,7 @@ Bug:        /caspar/bug/?matchid=12345
             <li>Open <strong>vMix</strong> and go to <strong>Settings</strong> → <strong>Scripting</strong>.</li>
             <li>Create a new script and paste the contents of <code>vmix/scripting</code>.</li>
             <li>Set <code>SCOREBOARD</code> to your title input name if different from default.</li>
-            <li>Set <code>API_BASE_URL</code> to your server, for example <code>https://scores.nkpa.co.uk/api/v1/match</code> or your local endpoint.</li>
+            <li>Set <code>VMIX_DATA_URL</code> to your vMix JSON feed, for example <code>https://scores.nkpa.co.uk/api/v1/vmix</code> or your local endpoint.</li>
             <li>Save and click <strong>Start</strong> for the script.</li>
             <li>Update <code>MATCHID.Text</code> on the scoreboard input to the match you want to track.</li>
         </ol>
@@ -336,10 +337,11 @@ Bug:        /caspar/bug/?matchid=12345
         <ul>
             <li>Runs an infinite loop and polls every <code>500ms</code>.</li>
             <li>Reads <code>MATCHID.Text</code> from the <code>SCOREBOARD</code> title input.</li>
-            <li>Calls <code>/api/v1/match/&lt;matchid&gt;</code> to get match JSON.</li>
-            <li>Extracts <code>player2serve</code> from the JSON response.</li>
-            <li>If value is <code>1</code>: shows <code>SERVE_1.Source</code>, hides <code>SERVE_2.Source</code>.</li>
-            <li>If value is <code>2</code>: hides <code>SERVE_1.Source</code>, shows <code>SERVE_2.Source</code>.</li>
+            <li>Calls <code>/api/v1/vmix</code> to get the vMix JSON feed.</li>
+            <li>Finds the row whose <code>matchid</code> matches the scoreboard input.</li>
+            <li>Reads <code>p1_serve</code> / <code>p2_serve</code> from that row.</li>
+            <li>If value is <code>1</code>: shows <code>SERVE_1.source</code>, hides <code>SERVE_2.source</code>.</li>
+            <li>If value is <code>2</code>: hides <code>SERVE_1.source</code>, shows <code>SERVE_2.source</code>.</li>
             <li>For missing/invalid value: hides both serve indicators.</li>
             <li>Only performs visibility updates when the serve value changes, to reduce unnecessary commands.</li>
         </ul>
@@ -348,7 +350,7 @@ Bug:        /caspar/bug/?matchid=12345
         <ul>
             <li>If console shows <code>Scoreboard input not found</code>, check the input name matches <code>SCOREBOARD</code>.</li>
             <li>If console shows <code>Match ID not found</code>, ensure <code>MATCHID.Text</code> exists and is populated.</li>
-            <li>If indicators never change, verify API reachability by opening <code>/api/v1/match/&lt;matchid&gt;</code> in a browser and checking <code>player2serve</code>.</li>
+            <li>If indicators never change, verify API reachability by opening <code>/api/v1/vmix</code> in a browser and checking the row for <code>matchid</code> plus <code>p1_serve</code> / <code>p2_serve</code>.</li>
         </ul>
 
         <p><strong>Quick copy: vMix script</strong></p>
@@ -365,8 +367,8 @@ Bug:        /caspar/bug/?matchid=12345
 ' Copyright (c) 2025 Nathan Silveston. All rights reserved.
 '
 ' Description: Automated serve indicator control that reads
-'              player2serve data from the tennis score API
-'              hosted at https://scores.nkpa.co.uk
+'              serve flags from the vMix JSON data source
+'              hosted at https://scores.nkpa.co.uk/api/v1/vmix
 '              and displays the appropriate serve bug.
 '              MatchID is read from a text field in the
 '              specified SCOREBOARD title input.
@@ -376,13 +378,75 @@ Bug:        /caspar/bug/?matchid=12345
 ' Version: 1.0
 '
 ' Usage: Add this script to vMix and set SCOREBOARD and
-'        API_BASE_URL variables to match your setup.
+'        VMIX_DATA_URL variables to match your setup.
 ' ============================================================
 
 Dim SCOREBOARD As String = "SCOREBOARD"
-Dim API_BASE_URL As String = "https://scores.nkpa.co.uk/api/v1/match"
+Dim VMIX_DATA_URL As String = "https://scores.nkpa.co.uk/api/v1/vmix"
 Dim lastServeValue As String = ""
 Dim currentServeStatus As String = "unknown"
+
+Function ExtractJsonStringValueFromPosition(jsonContent As String, fieldIndex As Integer) As String
+    If fieldIndex < 0 Then
+        Return ""
+    End If
+
+    Dim colonIndex As Integer = jsonContent.IndexOf(":", fieldIndex)
+    If colonIndex = -1 Then
+        Return ""
+    End If
+
+    Dim remainder As String = jsonContent.Substring(colonIndex + 1).TrimStart()
+    If remainder.StartsWith(""") Then
+        remainder = remainder.Substring(1)
+        Dim endIndex As Integer = remainder.IndexOf(""")
+        If endIndex > -1 Then
+            Return remainder.Substring(0, endIndex)
+        End If
+        Return remainder
+    End If
+
+    Dim valueEnd As Integer = remainder.IndexOfAny(New Char() {","c, "}"c})
+    If valueEnd = -1 Then
+        valueEnd = remainder.Length
+    End If
+
+    Return remainder.Substring(0, valueEnd).Trim()
+End Function
+
+Function ExtractJsonStringValue(jsonContent As String, fieldName As String) As String
+    Dim fieldIndex As Integer = jsonContent.IndexOf("""" & fieldName & """")
+    If fieldIndex = -1 Then
+        Return ""
+    End If
+
+    Return ExtractJsonStringValueFromPosition(jsonContent, fieldIndex)
+End Function
+
+Function FindMatchObject(jsonContent As String, matchId As String) As String
+    Dim searchIndex As Integer = 0
+
+    While True
+        Dim fieldIndex As Integer = jsonContent.IndexOf("""matchid""", searchIndex)
+        If fieldIndex = -1 Then
+            Exit While
+        End If
+
+        Dim candidateMatchId As String = ExtractJsonStringValueFromPosition(jsonContent, fieldIndex)
+        If candidateMatchId = matchId Then
+            Dim objectStart As Integer = jsonContent.LastIndexOf("{", fieldIndex)
+            Dim objectEnd As Integer = jsonContent.IndexOf("}", fieldIndex)
+            If objectStart > -1 AndAlso objectEnd > objectStart Then
+                Return jsonContent.Substring(objectStart, objectEnd - objectStart + 1)
+            End If
+            Exit While
+        End If
+
+        searchIndex = fieldIndex + 1
+    End While
+
+    Return ""
+End Function
 
 Console.WriteLine("========== SCRIPT INITIALIZED ==========")
 Console.WriteLine("[INIT] Serve indicator script starting...")
@@ -393,8 +457,8 @@ Try
     If scoreboardInput IsNot Nothing Then
         Console.WriteLine("[INIT] SCOREBOARD input found")
         Console.WriteLine("[INIT] Checking initial visibility states...")
-        Console.WriteLine("[INIT] SERVE_1.Source - Initial state: checking...")
-        Console.WriteLine("[INIT] SERVE_2.Source - Initial state: checking...")
+        Console.WriteLine("[INIT] SERVE_1.source - Initial state: checking...")
+        Console.WriteLine("[INIT] SERVE_2.source - Initial state: checking...")
     Else
         Console.WriteLine("[INIT] WARNING: SCOREBOARD input not found at startup")
     End If
@@ -420,8 +484,8 @@ While True
             If String.IsNullOrEmpty(matchId) Then
                 Console.WriteLine("Match ID not found in scoreboard")
             Else
-                ' Fetch the match data from the API using WebRequest
-                Dim url As String = API_BASE_URL & "/" & matchId
+                ' Fetch the vMix JSON data source using WebRequest
+                Dim url As String = VMIX_DATA_URL
                 Dim client = System.Net.WebRequest.Create(url)
                 Dim response = client.GetResponse()
 
@@ -430,18 +494,18 @@ While True
                     Dim jsonContent As String = sr.ReadToEnd()
                     sr.Close()
 
-                    ' Parse player2serve from JSON string manually
+                    Dim matchObject As String = FindMatchObject(jsonContent, matchId)
                     Dim serveValue As String = ""
-                    Dim startIndex As Integer = jsonContent.IndexOf("""player2serve""")
 
-                    If startIndex > -1 Then
-                        startIndex = jsonContent.IndexOf(":", startIndex) + 1
-                        Dim endIndex As Integer = jsonContent.IndexOf(",", startIndex)
-                        If endIndex = -1 Then
-                            endIndex = jsonContent.IndexOf("}", startIndex)
+                    If matchObject <> "" Then
+                        ' The vMix feed already exposes serve markers as text fields.
+                        If ExtractJsonStringValue(matchObject, "p1_serve") <> "" Then
+                            serveValue = "1"
+                        ElseIf ExtractJsonStringValue(matchObject, "p2_serve") <> "" Then
+                            serveValue = "2"
                         End If
-                        serveValue = jsonContent.Substring(startIndex, endIndex - startIndex).Trim()
-                        serveValue = serveValue.Replace("""", "").Trim()
+                    Else
+                        Console.WriteLine("[WARN] Match ID not found in vMix JSON feed")
                     End If
 
                     ' Only log and update if serve value changed
@@ -452,32 +516,32 @@ While True
                         If serveValue = "1" Then
                             ' Player 1 (TOP) is serving
                             Console.WriteLine("[ACTION] Player 1 serving detected")
-                            Console.WriteLine("[VISIBLE] Showing SERVE_1.Source")
-                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: VISIBLE")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_1.source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_1.source")
+                            Console.WriteLine("[STATE] SERVE_1.source is now: VISIBLE")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.source")
+                            Console.WriteLine("[STATE] SERVE_2.source is now: HIDDEN")
                             currentServeStatus = "Player 1"
                         ElseIf serveValue = "2" Then
                             ' Player 2 (BOTTOM) is serving
                             Console.WriteLine("[ACTION] Player 2 serving detected")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
-                            Console.WriteLine("[VISIBLE] Showing SERVE_2.Source")
-                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: VISIBLE")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.source")
+                            Console.WriteLine("[STATE] SERVE_1.source is now: HIDDEN")
+                            Console.WriteLine("[VISIBLE] Showing SERVE_2.source")
+                            API.Function("SetImageVisibleOn", Input:=SCOREBOARD, SelectedName:="SERVE_2.source")
+                            Console.WriteLine("[STATE] SERVE_2.source is now: VISIBLE")
                             currentServeStatus = "Player 2"
                         Else
                             ' No serve data - hide both
                             Console.WriteLine("[ACTION] No serve data or invalid value")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.Source")
-                            Console.WriteLine("[STATE] SERVE_1.Source is now: HIDDEN")
-                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.Source")
-                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.Source")
-                            Console.WriteLine("[STATE] SERVE_2.Source is now: HIDDEN")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_1.source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_1.source")
+                            Console.WriteLine("[STATE] SERVE_1.source is now: HIDDEN")
+                            Console.WriteLine("[HIDDEN] Hiding SERVE_2.source")
+                            API.Function("SetImageVisibleOff", Input:=SCOREBOARD, SelectedName:="SERVE_2.source")
+                            Console.WriteLine("[STATE] SERVE_2.source is now: HIDDEN")
                             currentServeStatus = "None"
                         End If
                         Console.WriteLine("[UPDATE] Current status now: " & currentServeStatus)
@@ -485,7 +549,7 @@ While True
 
                     response.Close()
                 Else
-                    Console.WriteLine("Error fetching match data")
+                    Console.WriteLine("Error fetching vMix JSON feed")
                 End If
             End If
         End If

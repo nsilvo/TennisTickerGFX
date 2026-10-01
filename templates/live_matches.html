@@ -205,6 +205,63 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             pointer-events: none;
         }
 
+        .courts-container.layout-single .court-section,
+        .courts-container.layout-side-by-side .court-section,
+        .courts-container.layout-grid-2x2 .court-section {
+            max-height: none;
+        }
+
+        .courts-container.layout-single .court-section.stream-pos-1 {
+            top: 20px;
+            right: 20px;
+            bottom: 20px;
+            left: 20px;
+            width: auto;
+        }
+
+        .courts-container.layout-side-by-side .court-section.stream-pos-1,
+        .courts-container.layout-side-by-side .court-section.stream-pos-2 {
+            top: 20px;
+            bottom: 20px;
+            width: calc(50% - 30px);
+        }
+
+        .courts-container.layout-side-by-side .court-section.stream-pos-1 {
+            left: 20px;
+        }
+
+        .courts-container.layout-side-by-side .court-section.stream-pos-2 {
+            right: 20px;
+        }
+
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-1,
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-2,
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-3,
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-4 {
+            width: calc(50% - 30px);
+            height: calc(50% - 30px);
+        }
+
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-1 {
+            top: 20px;
+            left: 20px;
+        }
+
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-2 {
+            top: 20px;
+            right: 20px;
+        }
+
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-3 {
+            bottom: 20px;
+            left: 20px;
+        }
+
+        .courts-container.layout-grid-2x2 .court-section.stream-pos-4 {
+            right: 20px;
+            bottom: 20px;
+        }
+
         .court-section {
             position: absolute;
             background: rgba(24, 24, 33, 0.85);
@@ -269,6 +326,33 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             padding: 8px;
             flex: 1;
             overflow-y: auto;
+        }
+
+        .court-video-container {
+            width: 100%;
+            min-height: 180px;
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .court-video-container iframe {
+            width: 100%;
+            height: 100%;
+            min-height: 180px;
+            border: none;
+        }
+
+        .video-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 180px;
+            color: var(--muted-text);
+            font-size: 0.85rem;
+            text-align: center;
+            padding: 10px;
         }
 
         .court-matches {
@@ -774,11 +858,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 <script type="text/javascript">
     // Video feed configuration - update these URLs for your courts
     const courtVideoFeeds = {
-        '5': 'https://mediacp.nkpa.co.uk/hls/testcourt/testcourt.m3u8',  // Replace with actual stream URL
-        '6': 'https://player.castr.com/live_efb913b0d61011f0b66cbbb22ef5905f',
-        '7': 'https://player.castr.com/live_efb913b0d61011f0b66cbbb22ef5905f',
-        '8': 'https://player.castr.com/live_efb913b0d61011f0b66cbbb22ef5905f',
-        // Add more courts as needed
+        '1': 'https://mediacp.nkpa.co.uk/hls/testcourt/testcourt.m3u8',  // Replace with actual stream URL
+        '2': 'https://player.castr.com/live_efb913b0d61011f0b66cbbb22ef5905f'
     };
 
     const iso3ToIso2 = {
@@ -789,6 +870,31 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         'CZE': 'cz', 'POL': 'pl', 'DEN': 'dk', 'AUT': 'at', 'ROU': 'ro',
         'SRB': 'rs', 'CRO': 'hr', 'IRL': 'ie', 'SCO': 'gb-sct', 'WAL': 'gb-wls'
     };
+
+    const streamConfig = {{ stream_config|tojson }};
+    const configuredStreamCount = Math.max(1, Math.min(4, Number(streamConfig.stream_count || 1)));
+    const configuredStreamLayout = (streamConfig.stream_layout || 'side-by-side').toLowerCase();
+    const configuredStreamCourts = Array.isArray(streamConfig.stream_courts)
+        ? streamConfig.stream_courts.map(v => (v || '').toString())
+        : [];
+    const configuredStreamUrls = Array.isArray(streamConfig.stream_urls)
+        ? streamConfig.stream_urls.map(v => (v || '').toString())
+        : [];
+    const activeStreamSlots = Array.from({ length: configuredStreamCount }, function (_unused, idx) {
+        return {
+            slot: idx + 1,
+            court: configuredStreamCourts[idx] || '',
+            url: configuredStreamUrls[idx] || ''
+        };
+    });
+    const selectedCourtsSet = new Set(activeStreamSlots.map(slot => slot.court).filter(Boolean));
+    const effectiveLayout = (() => {
+        if (configuredStreamCount === 1) return 'single';
+        if (configuredStreamCount === 2) {
+            return configuredStreamLayout === 'grid-2x2' ? 'side-by-side' : configuredStreamLayout;
+        }
+        return 'grid-2x2';
+    })();
 
     const getTwoLetterCode = (threeLetterCode) => {
         if (!threeLetterCode) return '';
@@ -805,6 +911,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     const delayMinusBtn = document.getElementById('delay_minus');
     const delayPlusBtn = document.getElementById('delay_plus');
     const delayResetBtn = document.getElementById('delay_reset');
+
+    courtsContainer.classList.add(`layout-${effectiveLayout}`);
 
     // Load saved delay from localStorage or default to 0
     let updateDelay = parseFloat(localStorage.getItem('syncDelay') || '0');
@@ -901,6 +1009,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     const toInt = (val) => {
         const n = parseInt(val, 10);
         return Number.isNaN(n) ? 0 : n;
+    };
+
+    const getCourtNumberFromRaw = (courtRaw) => {
+        const match = (courtRaw || '').toString().match(/\d+/);
+        return match ? match[0] : '';
+    };
+
+    const isSelectedCourt = (courtNumber) => {
+        if (!courtNumber) return false;
+        if (selectedCourtsSet.size === 0) return true;
+        return selectedCourtsSet.has(courtNumber);
     };
 
     const buildSetCellsHTML = (match, playerKeyPrefix) => {
@@ -1161,14 +1280,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         
         // First, add all live matches (including warmup)
         for (const match of liveMatches) {
-            const courtRaw = (match.court || 'No Court').toString();
-            const courtMatch = courtRaw.match(/\d+/);
-            const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-            
-            // Only show courts 5, 6, 7, 8
-            if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
-            
-            const court = courtNum.toString();
+            const court = getCourtNumberFromRaw(match.court);
+            if (!isSelectedCourt(court)) continue;
             if (!courtGroups[court]) {
                 courtGroups[court] = [];
             }
@@ -1177,13 +1290,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         // Then add planned/upcoming matches for courts that don't have live matches
         for (const match of plannedMatches) {
-            const courtRaw = (match.court || 'No Court').toString();
-            const courtMatch = courtRaw.match(/\d+/);
-            const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-            
-            if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
-            
-            const court = courtNum.toString();
+            const court = getCourtNumberFromRaw(match.court);
+            if (!isSelectedCourt(court)) continue;
             
             // Only add if this court doesn't already have a live/warmup match
             if (!courtGroups[court] || courtGroups[court].length === 0) {
@@ -1196,13 +1304,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         // Handle completed matches - show for 60 seconds, then allow upcoming to replace
         for (const match of completedMatches) {
-            const courtRaw = (match.court || 'No Court').toString();
-            const courtMatch = courtRaw.match(/\d+/);
-            const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-            
-            if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
-            
-            const court = courtNum.toString();
+            const court = getCourtNumberFromRaw(match.court);
+            if (!isSelectedCourt(court)) continue;
             const matchId = match.matchid;
             
             // Track when this match was completed
@@ -1241,11 +1344,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         // Process each match: show new matches immediately, delay score updates
         for (const match of matchesToDisplay) {
             const matchId = match.matchid;
-            const courtRaw = (match.court || 'No Court').toString();
-            const courtMatch = courtRaw.match(/\d+/);
-            const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-            
-            if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
+            const court = getCourtNumberFromRaw(match.court);
+            if (!isSelectedCourt(court)) continue;
             
             const isNewMatch = !currentMatches[matchId];
             const hasScoreChanged = currentMatches[matchId] && (
@@ -1271,13 +1371,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                     const updatedCourtGroups = {};
                     for (const mid in currentMatches) {
                         const m = currentMatches[mid];
-                        const courtRaw = (m.court || 'No Court').toString();
-                        const courtMatch = courtRaw.match(/\d+/);
-                        const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-                        
-                        if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
-                        
-                        const court = courtNum.toString();
+                        const court = getCourtNumberFromRaw(m.court);
+                        if (!isSelectedCourt(court)) continue;
                         if (!updatedCourtGroups[court]) {
                             updatedCourtGroups[court] = [];
                         }
@@ -1311,13 +1406,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         const currentCourtGroups = {};
         for (const matchId in currentMatches) {
             const match = currentMatches[matchId];
-            const courtRaw = (match.court || 'No Court').toString();
-            const courtMatch = courtRaw.match(/\d+/);
-            const courtNum = courtMatch ? parseInt(courtMatch[0], 10) : null;
-            
-            if (courtNum === null || courtNum < 5 || courtNum > 8) continue;
-            
-            const court = courtNum.toString();
+            const court = getCourtNumberFromRaw(match.court);
+            if (!isSelectedCourt(court)) continue;
             if (!currentCourtGroups[court]) {
                 currentCourtGroups[court] = [];
             }
@@ -1330,59 +1420,33 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     function renderAllCourts(courtGroups) {
         courtsContainer.innerHTML = '';
 
-        // Courts to display in corners (top-left, top-right, bottom-left, bottom-right)
-        const courtOrder = ['5', '6', '7', '8'];
+        for (const streamSlot of activeStreamSlots) {
+            const slotNum = streamSlot.slot;
+            const courtNum = streamSlot.court;
+            const matches = courtNum ? (courtGroups[courtNum] || []) : [];
+            const streamUrl = (streamSlot.url || '').trim() || (courtNum ? (courtVideoFeeds[courtNum] || '') : '');
 
-        for (const courtNum of courtOrder) {
-            const matches = courtGroups[courtNum] || [];
-
-            // Check if this court has any non-completed matches or upcoming matches
-            let hasActiveContent = false;
-            
-            if (matches.length > 0) {
-                for (const match of matches) {
-                    const statusUpper = (match.matchstatus || '').toUpperCase();
-                    const isCompleted = statusUpper.includes('COMPLETED') || statusUpper.includes('FINISHED');
-                    const isWarmup = statusUpper.includes('WARMUP');
-                    const isLive = statusUpper.includes('IN PROGRESS') || statusUpper.includes('TEST') || statusUpper.includes('WARMUP');
-                    const isUpcoming = statusUpper.includes('UPCOMING') || match.is_plan === 1 || match.is_plan === "1";
-                    
-                    // Show court if it has live, warmup, or upcoming matches
-                    // Completed matches hide if there's no upcoming match
-                    if (isLive || isWarmup || isUpcoming) {
-                        hasActiveContent = true;
-                        break;
-                    } else if (isCompleted && completedTimers[match.matchid]) {
-                        // Show completed match only within 60 second window
-                        const timeSinceCompleted = Date.now() - completedTimers[match.matchid];
-                        if (timeSinceCompleted < 60000) {
-                            hasActiveContent = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            // Skip rendering this court if there's no active content
-            if (!hasActiveContent && matches.length > 0) {
-                continue;
-            }
-
-            // Render court section with all matches for this court
             const section = document.createElement('div');
-            section.className = `court-section court-${courtNum}`;
+            section.className = `court-section stream-pos-${slotNum}`;
 
             let html = `
                 <div class="court-header">
                     <div class="court-title">
-                        <span class="court-name">Court ${courtNum}</span>
+                        <span class="court-name">Stream ${slotNum}${courtNum ? ` - Court ${courtNum}` : ''}</span>
                     </div>
                 </div>
                 <div class="court-content">
+                    <div class="court-video-container">
+                        ${streamUrl
+                            ? `<iframe src="${streamUrl}" allowfullscreen></iframe>`
+                            : '<div class="video-placeholder">No video URL configured for this stream</div>'}
+                    </div>
                     <div class="court-matches">
             `;
 
-            if (matches.length > 0) {
+            if (!courtNum) {
+                html += '<div class="placeholder" style="padding: 10px; text-align: center; color: var(--muted-text); font-size: 0.75rem;">Assign a court on the Config page</div>';
+            } else if (matches.length > 0) {
                 for (const match of matches) {
                     // Determine if this is a planned/upcoming match or completed match
                     const statusUpper = (match.matchstatus || '').toUpperCase();
@@ -1395,7 +1459,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                     html += card.outerHTML;
                 }
             } else {
-                html += '<div class="placeholder" style="padding: 10px; text-align: center; color: var(--muted-text); font-size: 0.75rem;">No matches</div>';
+                html += '<div class="placeholder" style="padding: 10px; text-align: center; color: var(--muted-text); font-size: 0.75rem;">No active match on this court</div>';
             }
 
             html += '</div></div></div>';
