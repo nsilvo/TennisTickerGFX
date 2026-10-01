@@ -666,17 +666,67 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         }
 
         .api-links li {
+            display: grid;
+            grid-template-columns: 70px 1fr auto;
+            align-items: center;
+            gap: 10px;
             font-size: 0.86rem;
-            margin-bottom: 4px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
 
-        .api-links a {
+        .api-links li:last-child {
+            border-bottom: none;
+        }
+
+        .api-links .api-method {
+            font-weight: 700;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            color: var(--muted-text);
+        }
+
+        .api-links .api-url-wrap {
+            min-width: 0;
+        }
+
+        .api-links .api-url {
+            display: block;
             color: var(--test-color);
             text-decoration: none;
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 0.82rem;
+            overflow-x: auto;
+            white-space: nowrap;
         }
 
-        .api-links a:hover {
+        .api-links .api-url:hover {
             text-decoration: underline;
+        }
+
+        .api-links .api-desc {
+            display: block;
+            margin-top: 2px;
+            color: var(--muted-text);
+            font-size: 0.78rem;
+            white-space: normal;
+        }
+
+        .api-links .copy-btn {
+            padding: 5px 10px;
+            font-size: 0.68rem;
+        }
+
+        @media (max-width: 720px) {
+            .api-links li {
+                grid-template-columns: 1fr auto;
+                grid-template-areas:
+                    "method copy"
+                    "url    url";
+            }
+            .api-links .api-method { grid-area: method; }
+            .api-links .copy-btn { grid-area: copy; justify-self: end; }
+            .api-links .api-url-wrap { grid-area: url; }
         }
 
         /* ===== RESPONSIVE ===== */
@@ -785,13 +835,73 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     <hr>
 
-    <h2>API Endpoints for Reference</h2>
+    <h2>🔗 API Links <span style="font-weight:400;text-transform:none;letter-spacing:normal;font-size:0.7rem;color:var(--muted-text);">(click a link to open, or use Copy)</span></h2>
     <div class="api-links">
-        <ul>
-            <li><strong>GET</strong> <a href="/api/v1/scores">/api/v1/scores</a> — all matches, includes tournament_id, last_updated, refresh_interval_seconds, match_count.</li>
-            <li><strong>GET</strong> <a href="/api/v1/scores/court/1">/api/v1/scores/court/1</a> — filter to a specific court.</li>
-            <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match JSON, 404 if missing.</li>
-            <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — change the active tournament being scraped.</li>
+        <ul id="api_links_list">
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/scores">{{ base_url }}/api/v1/scores</a>
+                    <span class="api-desc">All cached matches — tournament_id, last_updated, refresh_interval_seconds, match_count, matches[].</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/scores">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/scores/court/1">{{ base_url }}/api/v1/scores/court/1</a>
+                    <span class="api-desc">Same as above, filtered to one court (replace "1").</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/scores/court/1">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/match/12345">{{ base_url }}/api/v1/match/12345</a>
+                    <span class="api-desc">Single match lookup by matchid (replace "12345"); 404 if not found.</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/match/12345">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET/POST</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/tourid/{{ tournament_id }}">{{ base_url }}/api/v1/tourid/{{ tournament_id }}</a>
+                    <span class="api-desc">Switch the active tournament being scraped (numeric only).</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/tourid/{{ tournament_id }}">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/vmix">{{ base_url }}/api/v1/vmix</a>
+                    <span class="api-desc">vMix data source: one flat row per court (use ?court=1 to filter).</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/vmix">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/api/v1/vmix/wide?courts=4">{{ base_url }}/api/v1/vmix/wide?courts=4</a>
+                    <span class="api-desc">Multi-court board feed: one row with columns per court slot.</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/api/v1/vmix/wide?courts=4">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/caspar/bug/?court=1">{{ base_url }}/caspar/bug/?court=1</a>
+                    <span class="api-desc">Caspar/vMix lower-third bug overlay for a given court.</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/caspar/bug/?court=1">📋 Copy</button>
+            </li>
+            <li>
+                <span class="api-method">GET</span>
+                <span class="api-url-wrap">
+                    <a class="api-url" target="_blank" href="{{ base_url }}/caspar/scoreboard/?court=1">{{ base_url }}/caspar/scoreboard/?court=1</a>
+                    <span class="api-desc">Full scoreboard overlay for a given court.</span>
+                </span>
+                <button class="btn copy-btn" data-copy="{{ base_url }}/caspar/scoreboard/?court=1">📋 Copy</button>
+            </li>
         </ul>
     </div>
 </div>

@@ -1093,7 +1093,11 @@ def index():
         tour_id = CURRENT_TOURNAMENT_ID
         interval = SCRAPE_INTERVAL
 
-    response = make_response(render_template('index.html', tournament_id=tour_id, scrape_interval=interval))
+    base_url = request.url_root.rstrip('/')
+
+    response = make_response(render_template(
+        'index.html', tournament_id=tour_id, scrape_interval=interval, base_url=base_url
+    ))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
