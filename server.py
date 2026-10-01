@@ -5,6 +5,11 @@ Author: Nathan Silveston
 Contact: nathan@nkpa.co.uk | +44 7515 018048
 Copyright (c) 2025 Nathan Silveston. All rights reserved.
 """
+# Must run before any other stdlib/network imports so sockets, threading, etc.
+# cooperate with the gevent hub used by async_mode='gevent' below.
+from gevent import monkey
+monkey.patch_all()
+
 import xml.etree.ElementTree as ET
 import sqlite3
 import os
@@ -74,7 +79,7 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*",
 
-    async_mode='gevent',  # use eventlet for proper websockets
+    async_mode='gevent',
     logger=SOCKETIO_DEBUG,
     engineio_logger=SOCKETIO_DEBUG,
     manage_session=False
@@ -91,6 +96,10 @@ class XMLCacheManager:
     def __init__(self, db_name):
         self.conn = self._connect(db_name)
         self.param_style = 'sqlite' if isinstance(self.conn, sqlite3.Connection) else 'postgres'
+        # Serializes all cursor/commit calls: self.conn is shared between the
+        # background scraper thread and Flask request handlers.
+        self.db_lock = Lock()
+        self._latest_cache = None  # cached result of _load_all_matches(), cleared on any write
         self.create_tables()
 
     def _connect(self, db_name):
@@ -110,8 +119,16 @@ class XMLCacheManager:
                 raise RuntimeError("No compatible PostgreSQL driver found (psycopg or psycopg2).")
             except Exception as e:
                 print(f"Failed to connect to Postgres via DATABASE_URL: {e}. Falling back to SQLite.")
-        # SQLite fallback
-        return sqlite3.connect(db_name, check_same_thread=False)
+        # SQLite fallback. timeout= gives writers/readers a grace period instead of
+        # raising "database is locked" immediately; WAL lets reads proceed while the
+        # scraper thread writes, since both share this single connection.
+        conn = sqlite3.connect(db_name, check_same_thread=False, timeout=10)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception as e:
+            print(f"Could not set SQLite PRAGMAs: {e}")
+        return conn
 
     def create_tables(self):
         """
@@ -230,39 +247,52 @@ class XMLCacheManager:
 
     def get_setting(self, key):
         """Return a persisted setting value, or None if not set."""
-        cursor = self.conn.cursor()
-        try:
-            if self.param_style == 'sqlite':
-                cursor.execute("SELECT value FROM app_settings WHERE key=?", (key,))
-            else:
-                cursor.execute("SELECT value FROM app_settings WHERE key=%s", (key,))
-            row = cursor.fetchone()
-            return row[0] if row else None
-        except Exception as e:
-            print(f"Error reading setting '{key}': {e}")
-            return None
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                if self.param_style == 'sqlite':
+                    cursor.execute("SELECT value FROM app_settings WHERE key=?", (key,))
+                else:
+                    cursor.execute("SELECT value FROM app_settings WHERE key=%s", (key,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except Exception as e:
+                print(f"Error reading setting '{key}': {e}")
+                return None
+
+    def get_all_settings(self):
+        """Return every persisted setting as a dict in a single round trip."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT key, value FROM app_settings")
+                return {key: value for key, value in cursor.fetchall()}
+            except Exception as e:
+                print(f"Error reading settings: {e}")
+                return {}
 
     def save_setting(self, key, value):
         """Persist a setting so it survives restarts."""
-        cursor = self.conn.cursor()
-        try:
-            if self.param_style == 'sqlite':
-                cursor.execute("""
-                    INSERT INTO app_settings (key, value) VALUES (?, ?)
-                    ON CONFLICT (key) DO UPDATE SET value=excluded.value
-                """, (key, value))
-            else:
-                cursor.execute("""
-                    INSERT INTO app_settings (key, value) VALUES (%s, %s)
-                    ON CONFLICT (key) DO UPDATE SET value=excluded.value
-                """, (key, value))
-            self.conn.commit()
-        except Exception as e:
-            print(f"Error saving setting '{key}': {e}")
+        with self.db_lock:
+            cursor = self.conn.cursor()
             try:
-                self.conn.rollback()
-            except Exception:
-                pass
+                if self.param_style == 'sqlite':
+                    cursor.execute("""
+                        INSERT INTO app_settings (key, value) VALUES (?, ?)
+                        ON CONFLICT (key) DO UPDATE SET value=excluded.value
+                    """, (key, value))
+                else:
+                    cursor.execute("""
+                        INSERT INTO app_settings (key, value) VALUES (%s, %s)
+                        ON CONFLICT (key) DO UPDATE SET value=excluded.value
+                    """, (key, value))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error saving setting '{key}': {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
 
     def archive_completed_previous_day_matches(self):
         """
@@ -271,88 +301,92 @@ class XMLCacheManager:
         - winner_name is not empty (match is completed)
         - timestamp indicates it's from a previous day (before today at 00:00:00)
         """
-        cursor = self.conn.cursor()
         now = datetime.now()
         today_midnight = int(datetime(now.year, now.month, now.day).timestamp())
         archived_at = int(time.time())
 
-        try:
-            # Find completed matches from previous days
-            if self.param_style == 'sqlite':
-                cursor.execute("""
-                    SELECT * FROM matches
-                    WHERE winner_name != '' AND winner_name IS NOT NULL
-                      AND timestamp < ?
-                """, (today_midnight,))
-            else:
-                cursor.execute("""
-                    SELECT * FROM matches
-                    WHERE winner_name != '' AND winner_name IS NOT NULL
-                      AND timestamp < %s
-                """, (today_midnight,))
-
-            rows_to_archive = cursor.fetchall()
-            if rows_to_archive:
-                cols = [d[0] for d in cursor.description]
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Archiving {len(rows_to_archive)} completed previous-day matches...")
-
-                # Insert into archive table
-                for row in rows_to_archive:
-                    row_dict = dict(zip(cols, row))
-                    row_dict['archived_at'] = archived_at
-
-                    columns = list(row_dict.keys())
-                    values = list(row_dict.values())
-
-                    cols_sql = ", ".join(columns)
-                    if self.param_style == 'sqlite':
-                        placeholders = ", ".join(['?'] * len(columns))
-                        insert_sql = f"""
-                            INSERT OR IGNORE INTO matches_archive ({cols_sql})
-                            VALUES ({placeholders})
-                        """
-                    else:
-                        placeholders = ", ".join(['%s'] * len(columns))
-                        # Postgres doesn't have INSERT OR IGNORE; use ON CONFLICT
-                        insert_sql = f"""
-                            INSERT INTO matches_archive ({cols_sql}) VALUES ({placeholders})
-                            ON CONFLICT (matchid) DO NOTHING
-                        """
-                    cursor.execute(insert_sql, tuple(values))
-
-                # Delete from live table
-                match_ids_to_delete = [row[0] for row in rows_to_archive]  # matchid is first column
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                # Find completed matches from previous days
                 if self.param_style == 'sqlite':
-                    placeholders = ",".join(["?"] * len(match_ids_to_delete))
+                    cursor.execute("""
+                        SELECT * FROM matches
+                        WHERE winner_name != '' AND winner_name IS NOT NULL
+                          AND timestamp < ?
+                    """, (today_midnight,))
                 else:
-                    placeholders = ",".join(["%s"] * len(match_ids_to_delete))
-                cursor.execute(f"DELETE FROM matches WHERE matchid IN ({placeholders})", match_ids_to_delete)
+                    cursor.execute("""
+                        SELECT * FROM matches
+                        WHERE winner_name != '' AND winner_name IS NOT NULL
+                          AND timestamp < %s
+                    """, (today_midnight,))
 
-                self.conn.commit()
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Archived and removed {len(rows_to_archive)} matches from live table.")
+                rows_to_archive = cursor.fetchall()
+                if rows_to_archive:
+                    cols = [d[0] for d in cursor.description]
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Archiving {len(rows_to_archive)} completed previous-day matches...")
 
-        except Exception as e:
-            print(f"Error archiving matches: {e}")
+                    # Insert into archive table
+                    for row in rows_to_archive:
+                        row_dict = dict(zip(cols, row))
+                        row_dict['archived_at'] = archived_at
+
+                        columns = list(row_dict.keys())
+                        values = list(row_dict.values())
+
+                        cols_sql = ", ".join(columns)
+                        if self.param_style == 'sqlite':
+                            placeholders = ", ".join(['?'] * len(columns))
+                            insert_sql = f"""
+                                INSERT OR IGNORE INTO matches_archive ({cols_sql})
+                                VALUES ({placeholders})
+                            """
+                        else:
+                            placeholders = ", ".join(['%s'] * len(columns))
+                            # Postgres doesn't have INSERT OR IGNORE; use ON CONFLICT
+                            insert_sql = f"""
+                                INSERT INTO matches_archive ({cols_sql}) VALUES ({placeholders})
+                                ON CONFLICT (matchid) DO NOTHING
+                            """
+                        cursor.execute(insert_sql, tuple(values))
+
+                    # Delete from live table
+                    match_ids_to_delete = [row[0] for row in rows_to_archive]  # matchid is first column
+                    if self.param_style == 'sqlite':
+                        placeholders = ",".join(["?"] * len(match_ids_to_delete))
+                    else:
+                        placeholders = ",".join(["%s"] * len(match_ids_to_delete))
+                    cursor.execute(f"DELETE FROM matches WHERE matchid IN ({placeholders})", match_ids_to_delete)
+
+                    self.conn.commit()
+                    self._latest_cache = None
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Archived and removed {len(rows_to_archive)} matches from live table.")
+
+            except Exception as e:
+                print(f"Error archiving matches: {e}")
 
     def cleanup_old_archived_matches(self):
         """
         Remove archived matches older than 7 days.
         You can adjust the retention period as needed.
         """
-        cursor = self.conn.cursor()
         cutoff_time = int(time.time()) - (7 * 24 * 3600)  # 7 days ago
 
-        try:
-            if self.param_style == 'sqlite':
-                cursor.execute("DELETE FROM matches_archive WHERE archived_at < ?", (cutoff_time,))
-            else:
-                cursor.execute("DELETE FROM matches_archive WHERE archived_at < %s", (cutoff_time,))
-            deleted_count = cursor.rowcount
-            if deleted_count > 0:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Deleted {deleted_count} archived matches older than 7 days.")
-            self.conn.commit()
-        except Exception as e:
-            print(f"Error cleaning up archived matches: {e}")
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                if self.param_style == 'sqlite':
+                    cursor.execute("DELETE FROM matches_archive WHERE archived_at < ?", (cutoff_time,))
+                else:
+                    cursor.execute("DELETE FROM matches_archive WHERE archived_at < %s", (cutoff_time,))
+                deleted_count = cursor.rowcount
+                if deleted_count > 0:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Deleted {deleted_count} archived matches older than 7 days.")
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error cleaning up archived matches: {e}")
+
 
     def get_full_xml_url(self):
         with state_lock:
@@ -455,215 +489,7 @@ class XMLCacheManager:
         # Include LIVE (<match>), COMPLETED (<completed>), and PLANNED (<plan>)
         all_xml_elems = root.findall('match') + root.findall('completed') + root.findall('plan')
 
-        cursor = self.conn.cursor()
-        updates_made = 0
-        changed_match_ids = []
-
-        for match_elem in all_xml_elems:
-            match_id_elem = match_elem.find('matchid')
-            if match_id_elem is None or not match_id_elem.text:
-                continue
-
-            match_id = match_id_elem.text.strip()
-
-            # --- HELPER: ROBUST TYPE CONVERSION ---
-            def get_text_or_default(elem_name, default=''):
-                elem = match_elem.find(elem_name)
-                text = elem.text.strip().replace('\xa0', '').strip() if elem is not None and elem.text else ''
-
-                if isinstance(default, int):
-                    try:
-                        return int(text)
-                    except (ValueError, TypeError):
-                        return default
-
-                if not text and default != '':
-                    return default
-
-                return text
-
-            # --- Detect match type ---
-            is_completed = (match_elem.tag == "completed")
-            is_live = (match_elem.tag == "match")
-            is_plan = (match_elem.tag == "plan")
-
-            # --- Status handling ---
-            status_raw = get_text_or_default('matchstatus', default='').strip()
-            win_type = get_text_or_default('wintype', default='').strip()
-
-            if is_completed and not status_raw:
-                status_raw = "Completed"
-
-            if is_plan:
-                # planned matches are always treated as UPCOMING
-                status_raw = "UPCOMING"
-            
-            # If status is WARMUP and win_type is COMPLETED, treat as live warmup
-            if status_raw.upper() == "WARMUP" and win_type.upper() == "COMPLETED":
-                status_raw = "WARMUP"  # Keep as WARMUP to be treated as live
-
-            # --- sets played ---
-            if is_plan:
-                sets_played = 0
-            else:
-                sets_played = 0
-                for i in range(MAX_SETS, 0, -1):
-                    p1_score = get_text_or_default(f'set{i}1', default=0)
-                    p2_score = get_text_or_default(f'set{i}2', default=0)
-                    if p1_score > 0 or p2_score > 0:
-                        sets_played = i
-                        break
-
-            # --- player names ---
-            player1_raw_name = get_text_or_default('player1')
-            player2_raw_name = get_text_or_default('player2')
-
-            player1_full_extracted, player1_surname, player1_country = self.parse_player_name(player1_raw_name)
-            player2_full_extracted, player2_surname, player2_country = self.parse_player_name(player2_raw_name)
-
-            # scheduled time (plan only, but safe to read always)
-            scheduled_time = get_text_or_default('schedtime', default='')
-
-            # winner code / name
-            winner_code = get_text_or_default('winner', default='')
-            winner_name = ""
-            if is_plan:
-                winner_code = ''
-                winner_name = ''
-            else:
-                if winner_code == '1':
-                    winner_name = player1_full_extracted
-                elif winner_code == '2':
-                    winner_name = player2_full_extracted
-
-            # --- Construct full candidate data dict ---
-            candidate_data = {
-                'matchid': match_id,
-
-                # player1/player2 stores the Proper Cased full extracted name
-                'player1': player1_full_extracted,
-                'player2': player2_full_extracted,
-
-                # Full Raw Name
-                'player1_full': player1_raw_name,
-                'player2_full': player2_raw_name,
-
-                # Extracted fields
-                'player1_country': player1_country,
-                'player1_surname': player1_surname,  # ALL CAPS
-                'player2_country': player2_country,
-                'player2_surname': player2_surname,  # ALL CAPS
-
-                'matchname': get_text_or_default('matchname'),
-                'matchstatus': status_raw if status_raw else 'UPCOMING',
-                'winner': winner_code,
-                'winner_name': winner_name,
-                'sets_played_count': sets_played,
-
-                # Metadata
-                'tournid': get_text_or_default('tournid'),
-                'eventid': get_text_or_default('eventid'),
-                'extmid': get_text_or_default('extmid'),
-                'court': get_text_or_default('court'),
-                'lshort': get_text_or_default('lshort'),
-                'tname': get_text_or_default('tname'),
-                'ltouch': get_text_or_default('ltouch'),
-                'cam': get_text_or_default('cam'),
-                'cameraurl': get_text_or_default('cameraurl'),
-                'camerarooturl': get_text_or_default('camerarooturl'),
-                'matchstatusno': get_text_or_default('matchstatusno', default=0),
-                'stats_general': get_text_or_default('stats', default=0),
-                'stats_match': get_text_or_default('stats', default=0),
-                'game1': get_text_or_default('game1', default='0'),
-                'game2': get_text_or_default('game2', default='0'),
-                'player2serve': get_text_or_default('player2serve', default=0),
-                'lastservetype': get_text_or_default('lastservetype', default=0),
-
-                'schedtime': scheduled_time,
-                'is_plan': 1 if is_plan else 0
-            }
-
-            # Add Set Scores to candidate_data
-            for i in range(1, MAX_SETS + 1):
-                candidate_data[f"set{i}_p1"] = get_text_or_default(f'set{i}1', default=0)
-                candidate_data[f"set{i}_p2"] = get_text_or_default(f'set{i}2', default=0)
-
-                # --- NORMALISE TIE-BREAK VALUES ---
-                tb = get_text_or_default(f"set{i}tb", default="")
-                # Treat "0", "00", None as "no tiebreak"
-                if tb in ("0", "00", None):
-                    tb = ""
-                candidate_data[f"set{i}_tb"] = tb
-
-            # --- 4. CHECK FOR CHANGES ---
-            if self.param_style == 'sqlite':
-                cursor.execute("SELECT * FROM matches WHERE matchid=?", (match_id,))
-            else:
-                cursor.execute("SELECT * FROM matches WHERE matchid=%s", (match_id,))
-            row = cursor.fetchone()
-
-            should_update = False
-
-            if row is None:
-                should_update = True
-            else:
-                cols = [d[0] for d in cursor.description]
-                existing_data = dict(zip(cols, row))
-
-                for key, new_val in candidate_data.items():
-                    existing_val = existing_data.get(key)
-                    if existing_val != new_val:
-                        should_update = True
-                        break
-
-            # --- 5. EXECUTE DB WRITE ONLY IF CHANGED ---
-            if should_update:
-                candidate_data['timestamp'] = int(time.time())
-
-                columns = list(candidate_data.keys())
-                values = list(candidate_data.values())
-
-                cols_sql = ", ".join(columns)
-                if self.param_style == 'sqlite':
-                    placeholders = ", ".join(['?'] * len(columns))
-                else:
-                    placeholders = ", ".join(['%s'] * len(columns))
-                update_sql = ", ".join([f"{col}=excluded.{col}" for col in columns if col != 'matchid'])
-
-                # Upsert syntax differs; for Postgres use ON CONFLICT, for SQLite it's also supported
-                sql = f"""
-                    INSERT INTO matches ({cols_sql}) VALUES ({placeholders})
-                    ON CONFLICT (matchid) DO UPDATE SET {update_sql};
-                """
-
-                cursor.execute(sql, tuple(values))
-                updates_made += 1
-                changed_match_ids.append(match_id)
-
-        self.conn.commit()
-
-        # --- 6b. REMOVE stale planned matches not present in this XML any more ---
-        try:
-            match_ids_in_xml = set()
-            for elem in all_xml_elems:
-                mid_elem = elem.find("matchid")
-                if mid_elem is not None and mid_elem.text:
-                    match_ids_in_xml.add(mid_elem.text.strip())
-
-            cursor.execute("SELECT matchid FROM matches WHERE is_plan=1")
-            existing_plan_rows = cursor.fetchall()
-
-            for (mid,) in existing_plan_rows:
-                if mid not in match_ids_in_xml:
-                    print(f"Removing stale planned match {mid} from DB (no longer present in XML).")
-                    if self.param_style == 'sqlite':
-                        cursor.execute("DELETE FROM matches WHERE matchid=?", (mid,))
-                    else:
-                        cursor.execute("DELETE FROM matches WHERE matchid=%s", (mid,))
-
-            self.conn.commit()
-        except Exception as e:
-            print(f"Error cleaning stale planned matches: {e}")
+        updates_made, changed_match_ids = self._write_matches_to_db(all_xml_elems)
 
         # --- 7. EMIT SOCKETIO UPDATE IF DATA CHANGED ---
         if updates_made > 0:
@@ -694,29 +520,252 @@ class XMLCacheManager:
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Parsed {len(all_xml_elems)} matches. No changes detected.")
 
+    def _write_matches_to_db(self, all_xml_elems):
+        """Upserts parsed matches and prunes stale planned matches. Returns (updates_made, changed_match_ids)."""
+        updates_made = 0
+        changed_match_ids = []
+        removed_stale = False
+
+        with self.db_lock:
+            cursor = self.conn.cursor()
+
+            for match_elem in all_xml_elems:
+                match_id_elem = match_elem.find('matchid')
+                if match_id_elem is None or not match_id_elem.text:
+                    continue
+
+                match_id = match_id_elem.text.strip()
+
+                # --- HELPER: ROBUST TYPE CONVERSION ---
+                def get_text_or_default(elem_name, default=''):
+                    elem = match_elem.find(elem_name)
+                    text = elem.text.strip().replace('\xa0', '').strip() if elem is not None and elem.text else ''
+
+                    if isinstance(default, int):
+                        try:
+                            return int(text)
+                        except (ValueError, TypeError):
+                            return default
+
+                    if not text and default != '':
+                        return default
+
+                    return text
+
+                # --- Detect match type ---
+                is_completed = (match_elem.tag == "completed")
+                is_live = (match_elem.tag == "match")
+                is_plan = (match_elem.tag == "plan")
+
+                # --- Status handling ---
+                status_raw = get_text_or_default('matchstatus', default='').strip()
+                win_type = get_text_or_default('wintype', default='').strip()
+
+                if is_completed and not status_raw:
+                    status_raw = "Completed"
+
+                if is_plan:
+                    # planned matches are always treated as UPCOMING
+                    status_raw = "UPCOMING"
+
+                # If status is WARMUP and win_type is COMPLETED, treat as live warmup
+                if status_raw.upper() == "WARMUP" and win_type.upper() == "COMPLETED":
+                    status_raw = "WARMUP"  # Keep as WARMUP to be treated as live
+
+                # --- sets played ---
+                if is_plan:
+                    sets_played = 0
+                else:
+                    sets_played = 0
+                    for i in range(MAX_SETS, 0, -1):
+                        p1_score = get_text_or_default(f'set{i}1', default=0)
+                        p2_score = get_text_or_default(f'set{i}2', default=0)
+                        if p1_score > 0 or p2_score > 0:
+                            sets_played = i
+                            break
+
+                # --- player names ---
+                player1_raw_name = get_text_or_default('player1')
+                player2_raw_name = get_text_or_default('player2')
+
+                player1_full_extracted, player1_surname, player1_country = self.parse_player_name(player1_raw_name)
+                player2_full_extracted, player2_surname, player2_country = self.parse_player_name(player2_raw_name)
+
+                # scheduled time (plan only, but safe to read always)
+                scheduled_time = get_text_or_default('schedtime', default='')
+
+                # winner code / name
+                winner_code = get_text_or_default('winner', default='')
+                winner_name = ""
+                if is_plan:
+                    winner_code = ''
+                    winner_name = ''
+                else:
+                    if winner_code == '1':
+                        winner_name = player1_full_extracted
+                    elif winner_code == '2':
+                        winner_name = player2_full_extracted
+
+                # --- Construct full candidate data dict ---
+                candidate_data = {
+                    'matchid': match_id,
+
+                    # player1/player2 stores the Proper Cased full extracted name
+                    'player1': player1_full_extracted,
+                    'player2': player2_full_extracted,
+
+                    # Full Raw Name
+                    'player1_full': player1_raw_name,
+                    'player2_full': player2_raw_name,
+
+                    # Extracted fields
+                    'player1_country': player1_country,
+                    'player1_surname': player1_surname,  # ALL CAPS
+                    'player2_country': player2_country,
+                    'player2_surname': player2_surname,  # ALL CAPS
+
+                    'matchname': get_text_or_default('matchname'),
+                    'matchstatus': status_raw if status_raw else 'UPCOMING',
+                    'winner': winner_code,
+                    'winner_name': winner_name,
+                    'sets_played_count': sets_played,
+
+                    # Metadata
+                    'tournid': get_text_or_default('tournid'),
+                    'eventid': get_text_or_default('eventid'),
+                    'extmid': get_text_or_default('extmid'),
+                    'court': get_text_or_default('court'),
+                    'lshort': get_text_or_default('lshort'),
+                    'tname': get_text_or_default('tname'),
+                    'ltouch': get_text_or_default('ltouch'),
+                    'cam': get_text_or_default('cam'),
+                    'cameraurl': get_text_or_default('cameraurl'),
+                    'camerarooturl': get_text_or_default('camerarooturl'),
+                    'matchstatusno': get_text_or_default('matchstatusno', default=0),
+                    'stats_general': get_text_or_default('stats', default=0),
+                    'stats_match': get_text_or_default('stats', default=0),
+                    'game1': get_text_or_default('game1', default='0'),
+                    'game2': get_text_or_default('game2', default='0'),
+                    'player2serve': get_text_or_default('player2serve', default=0),
+                    'lastservetype': get_text_or_default('lastservetype', default=0),
+
+                    'schedtime': scheduled_time,
+                    'is_plan': 1 if is_plan else 0
+                }
+
+                # Add Set Scores to candidate_data
+                for i in range(1, MAX_SETS + 1):
+                    candidate_data[f"set{i}_p1"] = get_text_or_default(f'set{i}1', default=0)
+                    candidate_data[f"set{i}_p2"] = get_text_or_default(f'set{i}2', default=0)
+
+                    # --- NORMALISE TIE-BREAK VALUES ---
+                    tb = get_text_or_default(f"set{i}tb", default="")
+                    # Treat "0", "00", None as "no tiebreak"
+                    if tb in ("0", "00", None):
+                        tb = ""
+                    candidate_data[f"set{i}_tb"] = tb
+
+                # --- 4. CHECK FOR CHANGES ---
+                if self.param_style == 'sqlite':
+                    cursor.execute("SELECT * FROM matches WHERE matchid=?", (match_id,))
+                else:
+                    cursor.execute("SELECT * FROM matches WHERE matchid=%s", (match_id,))
+                row = cursor.fetchone()
+
+                should_update = False
+
+                if row is None:
+                    should_update = True
+                else:
+                    cols = [d[0] for d in cursor.description]
+                    existing_data = dict(zip(cols, row))
+
+                    for key, new_val in candidate_data.items():
+                        existing_val = existing_data.get(key)
+                        if existing_val != new_val:
+                            should_update = True
+                            break
+
+                # --- 5. EXECUTE DB WRITE ONLY IF CHANGED ---
+                if should_update:
+                    candidate_data['timestamp'] = int(time.time())
+
+                    columns = list(candidate_data.keys())
+                    values = list(candidate_data.values())
+
+                    cols_sql = ", ".join(columns)
+                    if self.param_style == 'sqlite':
+                        placeholders = ", ".join(['?'] * len(columns))
+                    else:
+                        placeholders = ", ".join(['%s'] * len(columns))
+                    update_sql = ", ".join([f"{col}=excluded.{col}" for col in columns if col != 'matchid'])
+
+                    # Upsert syntax differs; for Postgres use ON CONFLICT, for SQLite it's also supported
+                    sql = f"""
+                        INSERT INTO matches ({cols_sql}) VALUES ({placeholders})
+                        ON CONFLICT (matchid) DO UPDATE SET {update_sql};
+                    """
+
+                    cursor.execute(sql, tuple(values))
+                    updates_made += 1
+                    changed_match_ids.append(match_id)
+
+            self.conn.commit()
+
+            # --- 6b. REMOVE stale planned matches not present in this XML any more ---
+            try:
+                match_ids_in_xml = set()
+                for elem in all_xml_elems:
+                    mid_elem = elem.find("matchid")
+                    if mid_elem is not None and mid_elem.text:
+                        match_ids_in_xml.add(mid_elem.text.strip())
+
+                cursor.execute("SELECT matchid FROM matches WHERE is_plan=1")
+                existing_plan_rows = cursor.fetchall()
+
+                for (mid,) in existing_plan_rows:
+                    if mid not in match_ids_in_xml:
+                        print(f"Removing stale planned match {mid} from DB (no longer present in XML).")
+                        if self.param_style == 'sqlite':
+                            cursor.execute("DELETE FROM matches WHERE matchid=?", (mid,))
+                        else:
+                            cursor.execute("DELETE FROM matches WHERE matchid=%s", (mid,))
+                        removed_stale = True
+
+                if removed_stale:
+                    self.conn.commit()
+            except Exception as e:
+                print(f"Error cleaning stale planned matches: {e}")
+
+            if updates_made > 0 or removed_stale:
+                self._latest_cache = None
+
+        return updates_made, changed_match_ids
+
     def get_latest_data(self, court_number=None):
         """
-        Retrieves all match data from the cache and filters set columns for output.
-        Optionally filters by court number.
+        Retrieves all match data from the cache (cached in-process between writes)
+        and filters set columns for output. Optionally filters by court number.
         """
-        cursor = self.conn.cursor()
-
-        # Build the SQL query with optional court filter
-        sql = "SELECT * FROM matches"
-        params = []
+        with self.db_lock:
+            if self._latest_cache is None:
+                self._latest_cache = self._load_all_matches()
+            matches_list = self._latest_cache
 
         if court_number:
-            # We use LIKE for flexibility, assuming court names are often "Court X"
-            if self.param_style == 'sqlite':
-                sql += " WHERE court LIKE ?"
-                params.append(f"%{court_number}%")
-            else:
-                sql += " WHERE court LIKE %s"
-                params.append(f"%{court_number}%")
+            # Case-insensitive substring match, mirroring the old SQL LIKE %court_number% behaviour
+            token = str(court_number).strip().lower()
+            matches_list = [
+                m for m in matches_list
+                if token in str(m.get('court') or '').lower()
+            ]
 
-        sql += " ORDER BY timestamp DESC"
+        return matches_list
 
-        cursor.execute(sql, params)
+    def _load_all_matches(self):
+        """Full rebuild of the matches list from the DB. Caller must hold db_lock."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM matches ORDER BY timestamp DESC")
         rows = cursor.fetchall()
         cols = [description[0] for description in cursor.description]
 
@@ -943,22 +992,24 @@ def get_live_stream_config():
     stream_urls = DEFAULT_STREAM_URLS.copy()
 
     if manager:
-        count_raw = manager.get_setting("stream_count")
+        settings = manager.get_all_settings()
+
+        count_raw = settings.get("stream_count")
         try:
             if count_raw is not None:
                 stream_count = int(count_raw)
         except (TypeError, ValueError):
             pass
 
-        layout_raw = (manager.get_setting("stream_layout") or "").strip().lower()
+        layout_raw = (settings.get("stream_layout") or "").strip().lower()
         if layout_raw in ALLOWED_STREAM_LAYOUTS:
             stream_layout = layout_raw
 
         for idx in range(MAX_STREAM_SLOTS):
-            saved_court = (manager.get_setting(f"stream_court_{idx + 1}") or "").strip()
+            saved_court = (settings.get(f"stream_court_{idx + 1}") or "").strip()
             if saved_court:
                 stream_courts[idx] = saved_court
-            saved_url = (manager.get_setting(f"stream_url_{idx + 1}") or "").strip()
+            saved_url = (settings.get(f"stream_url_{idx + 1}") or "").strip()
             if saved_url:
                 stream_urls[idx] = saved_url
 

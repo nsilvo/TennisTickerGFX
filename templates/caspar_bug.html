@@ -69,30 +69,18 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             background: transparent;
         }
 
-        /* Floating bug strip */
+        /* Score content box. Show/hide + slide animation lives on #bug-shell
+           (static/css/caspar_bug.css) so the logo and score panel move as one unit. */
         #bug {
             display: inline-flex;
             flex-direction: column;
             gap: 2px;
             background: transparent;
-            box-shadow: var(--drop-shadow);
-            border-radius: 10px;
+            box-shadow: none;
+            border-radius: 0;
             overflow: visible;
-            opacity: 0;
-            transform: translateX(-40px);
-            transition: opacity 0.35s ease, transform 0.35s ease;
             width: max-content;
             min-width: 0;
-        }
-
-        #bug.visible {
-            opacity: 1;
-            transform: translateX(0);
-        }
-
-        #bug.hidden {
-            opacity: 0;
-            transform: translateX(-40px);
         }
 
         .player-row {
@@ -313,7 +301,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 <body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}" data-bug-court="{{ bug_court or '' }}">
 <div id="canvas">
     <div id="safe-container">
-        <div id="bug-shell">
+        <div id="bug-shell" class="hidden">
             {% if bug_logo_url %}
             <div id="bug-logo-wrap">
                 <img id="bug-logo" src="{{ bug_logo_url }}" alt="Bug logo">
@@ -321,7 +309,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             {% endif %}
 
             <div id="bug-and-debug">
-                <div id="bug" class="hidden">
+                <div id="bug">
                     <!-- rows injected via JS -->
                 </div>
 
@@ -363,6 +351,9 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     let forceHidden = false;
 
     const bugEl = document.getElementById('bug');
+    const bugShellEl = document.getElementById('bug-shell');
+    let hideTimeoutId = null;
+    const HIDE_TRANSITION_MS = 420; // keep in sync with #bug-shell transition duration
 
     // --- ISO 3 -> flag-icon code ---
     const iso3ToIso2 = {
@@ -383,7 +374,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     }
 
         // --- Build helpers for the bug layout ---
-        function buildPlayerInfoHTML(match, isP1) {
+        function buildPlayerInfoHTML(match, isP1, isServing) {
                 const prefix = isP1 ? 'p1' : 'p2';
                 const surnameKey = prefix === 'p1' ? 'player1_surname' : 'player2_surname';
                 const fullNameKey = prefix === 'p1' ? 'player1' : 'player2';
@@ -393,14 +384,15 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 const countryISO2 = toISO2(match[countryKey] || '');
                 return `
                     <div class="player-left" data-row="${prefix}">
+                        <span class="serve-ball ${isServing ? 'active' : ''}" data-key="serve_${prefix}">\uD83C\uDFBE</span>
                         <span class="flag-icon flag-icon-${countryISO2}"></span>
                         <span class="surname" data-key="surname_${prefix}">${surname}</span>
                     </div>`;
         }
 
-        function buildPlayerLeftHTML(match, isP1) {
+        function buildPlayerLeftHTML(match, isP1, isServing) {
                 // For convenience; same as buildPlayerInfoHTML but named for clarity
-                return buildPlayerInfoHTML(match, isP1);
+                return buildPlayerInfoHTML(match, isP1, isServing);
         }
 
         // Build a single player's sets-row HTML
@@ -440,25 +432,30 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 return `<div class="sets-row">${cells}</div>`;
         }
 
-        // Build a single player's game score + serve icon cell
-        function buildPlayerGameScoreHTML(match, isP1, isServing) {
+        // Build a single player's game score cell (serve indicator now lives next to the name)
+        function buildPlayerGameScoreHTML(match, isP1) {
                 const prefix = isP1 ? 'p1' : 'p2';
                 const gameKey = isP1 ? 'game1' : 'game2';
                 const gameScore = (match[gameKey] || '').toString();
                 return `
                     <div class="right-cell">
-                        <div class="game-wrap">
-                            <div class="game-box" data-key="game_${prefix}">${gameScore}</div>
-                            <div class="serve-dot ${isServing ? 'active' : ''}" data-key="serve_${prefix}"></div>
-                        </div>
+                        <div class="game-box" data-key="game_${prefix}">${gameScore}</div>
                     </div>`;
         }
 
+    // Slide/fade the whole shell (logo + score panel) out, then clear the
+    // score content only once the exit animation has actually finished so
+    // the bug doesn't snap away mid-transition.
+    function hideBug() {
+        bugShellEl.classList.remove('visible');
+        bugShellEl.classList.add('hidden');
+        clearTimeout(hideTimeoutId);
+        hideTimeoutId = setTimeout(() => { bugEl.innerHTML = ""; }, HIDE_TRANSITION_MS);
+    }
+
     function renderBug(match) {
         if (!match) {
-            bugEl.innerHTML = "";
-            bugEl.classList.remove('visible');
-            bugEl.classList.add('hidden');
+            hideBug();
             return;
         }
 
@@ -466,11 +463,12 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         // If match is finished and not in debug mode, hide the bug
         if (winnerName && !debugMode) {
-            bugEl.innerHTML = "";
-            bugEl.classList.remove('visible');
-            bugEl.classList.add('hidden');
+            hideBug();
             return;
         }
+
+        // Cancel any pending "clear content" from a previous hide so new data isn't wiped out
+        clearTimeout(hideTimeoutId);
 
         // Determine serving flags (player2serve: '1' -> p1, '2' -> p2)
         const p2serve = String(match.player2serve || '');
@@ -479,23 +477,22 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         bugEl.innerHTML = `
             <div class="bug-grid">
-                ${buildPlayerLeftHTML(match, true)}
+                ${buildPlayerLeftHTML(match, true, p1Serving)}
                 <div class="sets">${buildPlayerSetsRowHTML(match, true)}</div>
-                ${buildPlayerGameScoreHTML(match, true, p1Serving)}
+                ${buildPlayerGameScoreHTML(match, true)}
 
-                ${buildPlayerLeftHTML(match, false)}
+                ${buildPlayerLeftHTML(match, false, p2Serving)}
                 <div class="sets">${buildPlayerSetsRowHTML(match, false)}</div>
-                ${buildPlayerGameScoreHTML(match, false, p2Serving)}
+                ${buildPlayerGameScoreHTML(match, false)}
             </div>`;
 
         if (forceHidden) {
-            bugEl.classList.remove('visible');
-            bugEl.classList.add('hidden');
+            hideBug();
             return;
         }
 
-        bugEl.classList.remove('hidden');
-        bugEl.classList.add('visible');
+        bugShellEl.classList.remove('hidden');
+        bugShellEl.classList.add('visible');
     }
 
     // Playout control hooks for CasparCG and vMix
@@ -506,8 +503,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     function playOut() {
         forceHidden = true;
-        bugEl.classList.remove('visible');
-        bugEl.classList.add('hidden');
+        hideBug();
     }
 
     window.play = playIn;
