@@ -118,15 +118,16 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         }
 
         .surname {
+            display: inline-block;
             font-size: 1rem;
             font-weight: 700;
             letter-spacing: 0.04em;
             color: var(--text-dark);
             text-transform: uppercase;
-            max-width: 140px;
+            max-width: 323px;
             white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            overflow: visible;
+            transform-origin: left center;
         }
 
         .sets {
@@ -373,6 +374,22 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
         return Number.isNaN(n) ? 0 : n;
     }
 
+    // Shrink (never truncate) a surname horizontally so it always fits within
+    // SURNAME_MAX_WIDTH, instead of clipping it with an ellipsis.
+    const SURNAME_MAX_WIDTH = 323;
+    function fitSurnameText(el) {
+        if (!el) return;
+        el.style.transform = 'none';
+        const naturalWidth = el.scrollWidth;
+        el.style.transform = naturalWidth > SURNAME_MAX_WIDTH
+            ? `scaleX(${SURNAME_MAX_WIDTH / naturalWidth})`
+            : '';
+    }
+
+    function fitAllSurnames() {
+        document.querySelectorAll('#bug .surname').forEach(fitSurnameText);
+    }
+
         // --- Build helpers for the bug layout ---
         function buildPlayerInfoHTML(match, isP1, isServing) {
                 const prefix = isP1 ? 'p1' : 'p2';
@@ -384,7 +401,16 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 const countryISO2 = toISO2(match[countryKey] || '');
                 return `
                     <div class="player-left" data-row="${prefix}">
-                        <span class="serve-ball ${isServing ? 'active' : ''}" data-key="serve_${prefix}">\uD83C\uDFBE</span>
+                        <span class="serve-ball ${isServing ? 'active' : ''}" data-key="serve_${prefix}">
+                            <svg viewBox="0 0 100 100" class="serve-ball-icon" aria-hidden="true">
+                                <defs><clipPath id="ballClip-${prefix}"><circle cx="50" cy="50" r="48"/></clipPath></defs>
+                                <circle cx="50" cy="50" r="48" class="ball-fill"/>
+                                <g clip-path="url(#ballClip-${prefix})">
+                                    <path class="seam" d="M4 64 Q 34 54 42 4"/>
+                                    <path class="seam" d="M96 36 Q 66 46 58 96"/>
+                                </g>
+                            </svg>
+                        </span>
                         <span class="flag-icon flag-icon-${countryISO2}"></span>
                         <span class="surname" data-key="surname_${prefix}">${surname}</span>
                     </div>`;
@@ -485,6 +511,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 <div class="sets">${buildPlayerSetsRowHTML(match, false)}</div>
                 ${buildPlayerGameScoreHTML(match, false)}
             </div>`;
+
+        fitAllSurnames();
 
         if (forceHidden) {
             hideBug();

@@ -85,7 +85,9 @@
 }
 
 .serve-ball {
-    font-size: 0.85rem;
+    display: inline-flex;
+    width: 15px;
+    height: 15px;
     line-height: 1;
     opacity: 0.2;
     filter: grayscale(1);
@@ -95,6 +97,23 @@
 .serve-ball.active {
     opacity: 1;
     filter: grayscale(0);
+}
+
+.serve-ball-icon {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.serve-ball-icon .ball-fill {
+    fill: #d9e82a;
+}
+
+.serve-ball-icon .seam {
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 10;
+    stroke-linecap: round;
 }
 
 /* Current game score: solid navy cell, matching the reference bug style */
