@@ -1,0 +1,216 @@
+<!--
+File: templates/api_links.html
+Description: Copy/paste API and overlay links for each court.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Links</title>
+<style>
+:root {
+    --text-light: #f5f5f7;
+    --muted-text: #a0a0b0;
+    --test-color: #ffc107;
+    --success-color: #3ddc84;
+    --border-soft: #333344;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 32px 16px 48px;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+    color: var(--text-light); line-height: 1.5; min-height: 100vh;
+}
+.container { max-width: 1100px; margin: 0 auto; }
+h1, h2, h3 { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1rem; }
+
+.nav-bar {
+    position: sticky; top: 0; z-index: 1000;
+    background: linear-gradient(180deg, rgba(10,10,17,0.98) 0%, rgba(10,10,17,0.95) 50%, rgba(10,10,17,0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin: -32px -16px 32px -16px; padding: 12px 16px;
+}
+.nav-content { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.nav-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-text); margin: 0; }
+.nav-links { display: flex; gap: 16px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.nav-links a {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    text-decoration: none; color: var(--muted-text); border: 1px solid transparent; transition: all 0.15s ease;
+}
+.nav-links a:hover { color: var(--text-light); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+.nav-links a.active { color: var(--test-color); background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.5); }
+
+.card {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); margin-bottom: 20px;
+}
+.card h2 { color: var(--test-color); display: flex; align-items: center; gap: 10px; }
+.pin { font-size: 0.7rem; color: var(--muted-text); border: 1px solid var(--border-soft); border-radius: 999px; padding: 1px 8px; font-weight: 500; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 6px #3ddc84; display: inline-block; }
+.match-line { color: var(--muted-text); font-size: 0.85rem; margin: -6px 0 12px; }
+
+.link-row {
+    display: grid; grid-template-columns: 180px 1fr auto; gap: 12px; align-items: center;
+    padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.06);
+}
+.link-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-text); }
+.link-url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem;
+    color: var(--text-light); background: rgba(0,0,0,0.35); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 7px 10px; overflow-x: auto; white-space: nowrap;
+}
+.copy-btn {
+    padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    border: 1px solid rgba(255,193,7,0.7); background: rgba(255,193,7,0.16); color: var(--test-color);
+    min-width: 84px;
+}
+.copy-btn:hover { background: rgba(255,193,7,0.3); }
+.copy-btn.copied { border-color: rgba(61,220,132,0.7); background: rgba(61,220,132,0.16); color: var(--success-color); }
+.hint { font-size: 0.84rem; color: var(--muted-text); }
+@media (max-width: 760px){ .link-row { grid-template-columns: 1fr; gap: 6px; } }
+</style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/live_matches">🎬 Live Matches</a></li>
+            <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/api_links" class="active">🔗 API Links</a></li>
+            <li><a href="/results">📋 Results</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+            <li><a href="/help">❓ Help</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <h1>🔗 Court API Links</h1>
+    <p class="hint">Click <strong>Copy</strong> to grab a link for vMix Data Sources, browsers, or scripts.
+       Court cards refresh automatically; match-specific links follow the current match on each court.</p>
+
+    <div id="cards"></div>
+
+    <div class="card" id="global-card">
+        <h2>🌍 Tournament-wide</h2>
+        <div id="global-rows"></div>
+    </div>
+</div>
+
+<script id="pinned-courts" type="application/json">{{ pinned_courts | tojson }}</script>
+<script>
+const PINNED = JSON.parse(document.getElementById('pinned-courts').textContent) || [];
+const ORIGIN = window.location.origin;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function copyText(text, btn){
+    const done = () => {
+        btn.classList.add('copied'); btn.textContent = 'Copied ✓';
+        setTimeout(() => { btn.classList.remove('copied'); btn.textContent = 'Copy'; }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+    } else {
+        fallbackCopy(text, done);
+    }
+}
+function fallbackCopy(text, done){
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){ alert('Copy failed - select the text manually.'); }
+    document.body.removeChild(ta);
+}
+
+function rowHTML(label, url){
+    return `<div class="link-row">
+        <div class="link-label">${esc(label)}</div>
+        <div class="link-url">${esc(url)}</div>
+        <button class="copy-btn" data-url="${esc(url)}">Copy</button>
+    </div>`;
+}
+
+function statusBucket(m){
+    const s = String(m.matchstatus || '').toUpperCase();
+    if (m.is_plan || s === 'UPCOMING') return 'UPCOMING';
+    if (['IN PROGRESS','WARMUP','TEST'].some(k => s.includes(k))) return 'LIVE';
+    return 'COMPLETED';
+}
+
+function pickForCourt(matches, court){
+    const ms = matches.filter(m => String(m.court || '').trim() === court);
+    return ms.find(m => statusBucket(m) === 'LIVE')
+        || ms.filter(m => statusBucket(m) === 'UPCOMING').sort((a,b) => String(a.schedtime||'').localeCompare(String(b.schedtime||'')))[0]
+        || ms.sort((a,b) => (b.timestamp||0) - (a.timestamp||0))[0]
+        || null;
+}
+
+async function build(){
+    let matches = [];
+    try {
+        const j = await (await fetch('/api/v1/scores')).json();
+        matches = j.matches || [];
+    } catch(e){ console.error(e); }
+
+    const found = [...new Set(matches.map(m => String(m.court||'').trim()).filter(Boolean))];
+    const courts = [...PINNED, ...found.filter(c => !PINNED.includes(c)).sort()];
+
+    const cardsEl = document.getElementById('cards');
+    cardsEl.innerHTML = '';
+
+    courts.forEach(court => {
+        const enc = encodeURIComponent(court);
+        const m = pickForCourt(matches, court);
+        const live = m && statusBucket(m) === 'LIVE';
+        const pinned = PINNED.includes(court);
+
+        let rows = '';
+        rows += rowHTML('Court scores (JSON)', `${ORIGIN}/api/v1/scores/court/${enc}`);
+        rows += rowHTML('vMix data source', `${ORIGIN}/api/v1/vmix?court=${enc}`);
+        rows += rowHTML('Commentary screen', `${ORIGIN}/stats?court=${enc}`);
+        if (m) {
+            rows += rowHTML('Current match (JSON)', `${ORIGIN}/api/v1/match/${encodeURIComponent(m.matchid)}`);
+            rows += rowHTML('Scoreboard overlay', `${ORIGIN}/caspar/scoreboard/?matchid=${encodeURIComponent(m.matchid)}`);
+            rows += rowHTML('Bug overlay', `${ORIGIN}/caspar/bug/?matchid=${encodeURIComponent(m.matchid)}`);
+        }
+
+        const matchLine = m
+            ? `${live ? '<span class="live-dot"></span> ' : ''}${esc(m.player1 || '')} vs ${esc(m.player2 || '')} · ${esc(m.matchstatus || '')} (match ${esc(m.matchid)})`
+            : 'No match data for this court yet - links will populate when the feed includes it.';
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<h2>🎾 ${esc(court)} ${pinned ? '<span class="pin">pinned</span>' : ''}</h2>
+            <div class="match-line">${matchLine}</div>${rows}`;
+        cardsEl.appendChild(card);
+    });
+
+    // tournament-wide links (wide feed pre-ordered for the pinned courts)
+    const orderParam = PINNED.map(encodeURIComponent).join(',');
+    document.getElementById('global-rows').innerHTML =
+        rowHTML('All scores (JSON)', `${ORIGIN}/api/v1/scores`) +
+        rowHTML('vMix all courts (rows)', `${ORIGIN}/api/v1/vmix`) +
+        rowHTML('vMix multi-court board', `${ORIGIN}/api/v1/vmix/wide?courts=${PINNED.length || 4}&order=${orderParam}`);
+
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.onclick = () => copyText(btn.dataset.url, btn);
+    });
+}
+
+build();
+setInterval(build, 30000);
+</script>
+</body>
+</html>

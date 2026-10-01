@@ -1190,6 +1190,19 @@ def results():
     return response
 
 
+@app.route('/api_links')
+def api_links_page():
+    """Copy/paste API and overlay links, grouped per court (pinned courts shown first)."""
+    stream_config = get_live_stream_config()
+    pinned_courts = [c for c in stream_config["stream_courts"] if c]
+
+    response = make_response(render_template('api_links.html', pinned_courts=pinned_courts))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
 @app.route('/help')
 def help_page():
     return render_template("help.html")
