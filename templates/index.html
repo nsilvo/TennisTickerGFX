@@ -935,6 +935,29 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     const plannedContainer = document.getElementById('planned_matches_container');
     const forceUpdateBtn = document.getElementById('force_update_btn');
 
+    // === API links: copy-to-clipboard buttons ===
+    document.querySelectorAll('#api_links_list .copy-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const url = btn.getAttribute('data-copy');
+            const originalLabel = btn.textContent;
+            try {
+                await navigator.clipboard.writeText(url);
+            } catch (err) {
+                // Fallback for non-secure contexts / older browsers
+                const temp = document.createElement('textarea');
+                temp.value = url;
+                temp.style.position = 'fixed';
+                temp.style.opacity = '0';
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                document.body.removeChild(temp);
+            }
+            btn.textContent = '✅ Copied';
+            setTimeout(() => { btn.textContent = originalLabel; }, 1500);
+        });
+    });
+
     // === helper: set socket status pill ===
     const setSocketStatus = (connected) => {
         if (connected) {
