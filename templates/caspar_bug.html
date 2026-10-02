@@ -297,6 +297,26 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     </style>
 
     <link rel="stylesheet" href="{{ url_for('static', filename='css/caspar_bug.css') }}">
+    {% if bug_style %}
+    <!-- Appearance overrides saved via /caspar/bug/editor (must come after the stylesheet) -->
+    <style id="bug-custom-style">
+        #safe-container { {{ bug_style.position_css }} }
+        :root {
+            --row-bg: {{ bug_style.row_bg_rgba }};
+            --text-dark: {{ bug_style.text_color }};
+            --navy: {{ bug_style.accent_color }};
+            --set-win-bg: {{ bug_style.set_win_bg_rgba }};
+            --set-win-border: {{ bug_style.set_win_border_rgba }};
+        }
+        #bug-logo-wrap { background: {{ bug_style.accent_color }}; }
+        .game-box { background: {{ bug_style.accent_color }}; color: {{ bug_style.game_text_color }}; }
+        {% if not bug_style.show_game_box %}
+        /* No live point scoring: drop the current-game box column entirely */
+        .bug-grid { grid-template-columns: auto minmax(0, 1fr); }
+        .bug-grid .right-cell { display: none; }
+        {% endif %}
+    </style>
+    {% endif %}
 </head>
 
 <body class="{% if debug_mode %}debug-mode{% endif %}" data-debug-mode="{{ '1' if debug_mode else '0' }}" data-bug-court="{{ bug_court or '' }}">

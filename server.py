@@ -1394,9 +1394,112 @@ def save_live_stream_config_from_form(form):
     return True, "Saved stream layout, court assignments and stream URLs."
 
 
-def get_bug_logo_url():
-    """Return the uploaded bug logo URL if one has been configured."""
+# ====================================================================
+# Bug overlay appearance (edited via /caspar/bug/editor)
+# ====================================================================
+
+BUG_STYLE_SETTING_KEY = "bug_style"
+BUG_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+HEX_COLOR_PATTERN = re.compile(r'^#[0-9A-Fa-f]{6}$')
+
+DEFAULT_BUG_STYLE = {
+    "corner": "top-left",
+    "offset_x": 60,
+    "offset_y": 60,
+    "row_bg": "#eef1f6",        # score row background
+    "row_opacity": 90,          # percent
+    "text_color": "#0b1220",    # player names / set scores
+    "accent_color": "#0e1f4d",  # logo panel + current-game box background
+    "game_text_color": "#ffffff",
+    "set_win_color": "#3ddc84",
+    "show_game_box": True,      # untick for matches without live point scoring
+}
+
+
+def _hex_to_rgb(hex_color, fallback=(0, 0, 0)):
+    h = str(hex_color or '').lstrip('#')
+    if len(h) != 6:
+        return fallback
+    try:
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return fallback
+
+
+def get_bug_style():
+    """Bug appearance settings merged over defaults, plus derived CSS values."""
+    style = dict(DEFAULT_BUG_STYLE)
+    if manager:
+        raw = manager.get_setting(BUG_STYLE_SETTING_KEY)
+        if raw:
+            try:
+                saved = json.loads(raw)
+                style.update({k: v for k, v in saved.items() if k in DEFAULT_BUG_STYLE})
+            except (ValueError, TypeError) as e:
+                print(f"Ignoring invalid saved bug style: {e}")
+
+    # Coercion / clamping
+    try:
+        style['offset_x'] = max(0, min(1800, int(style['offset_x'])))
+        style['offset_y'] = max(0, min(1000, int(style['offset_y'])))
+        style['row_opacity'] = max(0, min(100, int(style['row_opacity'])))
+    except (TypeError, ValueError):
+        style['offset_x'], style['offset_y'], style['row_opacity'] = 60, 60, 90
+    if style['corner'] not in BUG_CORNERS:
+        style['corner'] = "top-left"
+    for key in ("row_bg", "text_color", "accent_color", "game_text_color", "set_win_color"):
+        if not HEX_COLOR_PATTERN.match(str(style[key])):
+            style[key] = DEFAULT_BUG_STYLE[key]
+    style['show_game_box'] = bool(style['show_game_box'])
+
+    # Derived CSS
+    r, g, b = _hex_to_rgb(style['row_bg'], (238, 241, 246))
+    style['row_bg_rgba'] = f"rgba({r},{g},{b},{style['row_opacity'] / 100:.2f})"
+    sr, sg, sb = _hex_to_rgb(style['set_win_color'], (61, 220, 132))
+    style['set_win_bg_rgba'] = f"rgba({sr},{sg},{sb},0.25)"
+    style['set_win_border_rgba'] = f"rgba({sr},{sg},{sb},0.9)"
+
+    x, y = style['offset_x'], style['offset_y']
+    style['position_css'] = {
+        "top-left": f"top:{y}px;left:{x}px;right:auto;bottom:auto;",
+        "top-right": f"top:{y}px;right:{x}px;left:auto;bottom:auto;",
+        "bottom-left": f"bottom:{y}px;left:{x}px;right:auto;top:auto;",
+        "bottom-right": f"bottom:{y}px;right:{x}px;left:auto;top:auto;",
+    }[style['corner']]
+    return style
+
+
+def save_bug_style_from_form(form):
+    """Validate and persist bug appearance settings from the editor page."""
     if not manager:
+        return False, "Bug style can only be saved while the scraper manager is running."
+
+    style = {}
+    corner = (form.get('corner') or '').strip()
+    if corner not in BUG_CORNERS:
+        return False, "Invalid corner selection."
+    style['corner'] = corner
+
+    for key, limit in (("offset_x", 1800), ("offset_y", 1000), ("row_opacity", 100)):
+        raw = (form.get(key) or '').strip()
+        if not raw.lstrip('-').isdigit():
+            return False, f"{key.replace('_', ' ').title()} must be a number."
+        style[key] = max(0, min(limit, int(raw)))
+
+    for key in ("row_bg", "text_color", "accent_color", "game_text_color", "set_win_color"):
+        raw = (form.get(key) or '').strip()
+        if not HEX_COLOR_PATTERN.match(raw):
+            return False, f"{key.replace('_', ' ').title()} must be a hex colour like #0e1f4d."
+        style[key] = raw
+
+    style['show_game_box'] = bool(form.get('show_game_box'))
+
+    manager.save_setting(BUG_STYLE_SETTING_KEY, json.dumps(style))
+    return True, "Bug style saved - overlays pick it up on their next (re)load."
+
+
+def get_bug_logo_url():
+    """Return the uploaded bug logo URL if one has been configured."""    if not manager:
         return None
 
     logo_filename = (manager.get_setting(BUG_LOGO_SETTING_KEY) or "").strip()
@@ -2214,8 +2317,48 @@ def caspar_bug():
         match_data=match_data,
         debug_mode=debug_mode,
         bug_logo_url=bug_logo_url,
+        bug_style=get_bug_style(),
         bug_court=normalize_court_number(court or (match_data or {}).get("court"))
     )
+
+
+@app.route('/caspar/bug/editor', methods=['GET', 'POST'])
+def bug_editor():
+    """Bug appearance editor: colours, position and point-box visibility with live preview."""
+    message = None
+    error = None
+
+    if request.method == 'POST':
+        if (request.form.get('form_name') or '') == 'reset':
+            if manager:
+                manager.save_setting(BUG_STYLE_SETTING_KEY, "")
+                message = "Bug style reset to defaults."
+            else:
+                error = "Database not ready yet - try again shortly."
+        else:
+            ok, msg = save_bug_style_from_form(request.form)
+            if ok:
+                message = msg
+            else:
+                error = msg
+
+    # Optional passthrough so the preview shows a specific match/court
+    preview_params = []
+    for key in ("matchid", "court"):
+        val = (request.args.get(key) or '').strip()
+        if val:
+            preview_params.append(f"{key}={val}")
+    preview_qs = "&".join(preview_params)
+
+    response = make_response(render_template(
+        'bug_editor.html',
+        style=get_bug_style(),
+        preview_qs=preview_qs,
+        message=message,
+        error=error
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 
 @app.route('/caspar/scoreboard/', methods=['GET'])
