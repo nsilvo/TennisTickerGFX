@@ -1,0 +1,222 @@
+<!--
+File: templates/players.html
+Description: Player bio editor - commentator spotter data maintained by production staff.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>👤 Players</title>
+<style>
+:root {
+    --text-light: #f5f5f7;
+    --muted-text: #a0a0b0;
+    --test-color: #ffc107;
+    --success-color: #3ddc84;
+    --error-color: #ff4b5c;
+    --border-soft: #333344;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 32px 16px 48px;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+    color: var(--text-light); line-height: 1.5; min-height: 100vh;
+}
+.container { max-width: 1100px; margin: 0 auto; }
+h1, h2, h3 { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+
+.nav-bar {
+    position: sticky; top: 0; z-index: 1000;
+    background: linear-gradient(180deg, rgba(10,10,17,0.98) 0%, rgba(10,10,17,0.95) 50%, rgba(10,10,17,0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin: -32px -16px 32px -16px; padding: 12px 16px;
+}
+.nav-content { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.nav-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-text); margin: 0; }
+.nav-links { display: flex; gap: 16px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.nav-links a {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    text-decoration: none; color: var(--muted-text); border: 1px solid transparent; transition: all 0.15s ease;
+}
+.nav-links a:hover { color: var(--text-light); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+.nav-links a.active { color: var(--test-color); background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.5); }
+
+.layout { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 860px){ .layout { grid-template-columns: 1fr; } }
+
+.card {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.hint { font-size: 0.84rem; color: var(--muted-text); }
+
+.notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; }
+.notice.success { background: rgba(61,220,132,0.14); border: 1px solid rgba(61,220,132,0.5); color: var(--success-color); }
+.notice.error { background: rgba(255,75,92,0.14); border: 1px solid rgba(255,75,92,0.5); color: var(--error-color); }
+
+#player-search {
+    width: 100%; padding: 9px 12px; border-radius: 8px; margin-bottom: 12px;
+    background: rgba(0,0,0,0.35); border: 1px solid var(--border-soft); color: var(--text-light);
+    font-size: 0.92rem;
+}
+.player-list { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.player-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+    font-size: 0.9rem;
+}
+.player-item:hover { background: rgba(255,255,255,0.06); }
+.player-item.selected { background: rgba(255,193,7,0.12); border-color: rgba(255,193,7,0.45); }
+.player-item .country { font-size: 0.72rem; color: var(--muted-text); }
+.bio-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.15); flex: 0 0 8px; }
+.bio-dot.has { background: var(--success-color); }
+
+label { display: block; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text); margin: 12px 0 4px; }
+input[type=text], textarea {
+    width: 100%; padding: 9px 12px; border-radius: 8px;
+    background: rgba(0,0,0,0.35); border: 1px solid var(--border-soft); color: var(--text-light);
+    font-size: 0.92rem; font-family: inherit;
+}
+textarea { min-height: 80px; resize: vertical; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+@media (max-width: 600px){ .form-grid { grid-template-columns: 1fr; } }
+.btn {
+    margin-top: 16px; padding: 10px 20px; border-radius: 8px; cursor: pointer;
+    font-size: 0.82rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    border: 1px solid rgba(255,193,7,0.7); background: rgba(255,193,7,0.16); color: var(--test-color);
+}
+.btn:hover { background: rgba(255,193,7,0.3); }
+.api-line { margin-top: 14px; font-size: 0.78rem; color: var(--muted-text); word-break: break-all; }
+.api-line a { color: #8ab4ff; text-decoration: none; }
+.api-line a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/live_matches">🎬 Live Matches</a></li>
+            <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/players" class="active">👤 Players</a></li>
+            <li><a href="/api_links">🔗 API Links</a></li>
+            <li><a href="/results">📋 Results</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+            <li><a href="/help">❓ Help</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <h1>👤 Player Bios</h1>
+    <p class="hint">Spotter data for commentators and on-screen graphics. Players are picked up automatically from the
+       score feed; bios you save here are served at <code>/api/v1/player/&lt;name&gt;</code> together with the player's
+       tournament win/loss record computed from our own results.</p>
+
+    {% if message %}<div class="notice success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+    <div class="layout">
+        <div class="card">
+            <h3>Players in feed</h3>
+            <input type="text" id="player-search" placeholder="Search players…">
+            <div class="player-list" id="player-list"></div>
+        </div>
+
+        <div class="card">
+            <h3 id="form-title">Add / edit player</h3>
+            <form method="post" action="/players" id="bio-form">
+                <input type="hidden" name="player_key" id="f-player_key">
+                <div class="form-grid">
+                    <div>
+                        <label for="f-display_name">Display name</label>
+                        <input type="text" name="display_name" id="f-display_name" required placeholder="e.g. Skidelsky W">
+                    </div>
+                    <div>
+                        <label for="f-country">Country</label>
+                        <input type="text" name="country" id="f-country" placeholder="e.g. GBR">
+                    </div>
+                    <div>
+                        <label for="f-born">Born / age</label>
+                        <input type="text" name="born" id="f-born" placeholder="e.g. 1974, Cambridge">
+                    </div>
+                    <div>
+                        <label for="f-plays">Plays</label>
+                        <input type="text" name="plays" id="f-plays" placeholder="e.g. Right-handed">
+                    </div>
+                    <div>
+                        <label for="f-hometown">Hometown / club</label>
+                        <input type="text" name="hometown" id="f-hometown" placeholder="e.g. London - Rocks Lane Padel">
+                    </div>
+                    <div>
+                        <label for="f-career">Career highlights / W-L</label>
+                        <input type="text" name="career" id="f-career" placeholder="e.g. 2x National Champion, 40-12 in 2026">
+                    </div>
+                </div>
+                <label for="f-notes">Commentator notes</label>
+                <textarea name="notes" id="f-notes" placeholder="Anything a commentator should know - story lines, playing style, injuries, head-to-heads…"></textarea>
+                <button class="btn" type="submit">💾 Save Player</button>
+            </form>
+            <div class="api-line" id="api-line"></div>
+        </div>
+    </div>
+</div>
+
+<script id="players-data" type="application/json">{{ players | tojson }}</script>
+<script>
+const PLAYERS = JSON.parse(document.getElementById('players-data').textContent) || [];
+const listEl = document.getElementById('player-list');
+const searchEl = document.getElementById('player-search');
+let selectedKey = null;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderList(){
+    const q = searchEl.value.trim().toUpperCase();
+    listEl.innerHTML = PLAYERS
+        .filter(p => !q || p.key.includes(q) || (p.name || '').toUpperCase().includes(q))
+        .map(p => `
+            <div class="player-item${p.key === selectedKey ? ' selected' : ''}" data-key="${esc(p.key)}">
+                <span>${esc(p.name)} ${p.country ? `<span class="country">${esc(p.country)}</span>` : ''}</span>
+                <span class="bio-dot${p.has_bio ? ' has' : ''}" title="${p.has_bio ? 'Bio saved' : 'No bio yet'}"></span>
+            </div>`).join('')
+        || '<div class="hint">No players match.</div>';
+
+    listEl.querySelectorAll('.player-item').forEach(el => {
+        el.onclick = () => selectPlayer(el.dataset.key);
+    });
+}
+
+function selectPlayer(key){
+    selectedKey = key;
+    const p = PLAYERS.find(x => x.key === key);
+    if (!p) return;
+    const bio = p.bio || {};
+    document.getElementById('form-title').textContent = `Edit: ${p.name}`;
+    document.getElementById('f-player_key').value = p.key;
+    document.getElementById('f-display_name').value = bio.display_name || p.name || '';
+    document.getElementById('f-country').value = bio.country || p.country || '';
+    document.getElementById('f-born').value = bio.born || '';
+    document.getElementById('f-plays').value = bio.plays || '';
+    document.getElementById('f-hometown').value = bio.hometown || '';
+    document.getElementById('f-career').value = bio.career || '';
+    document.getElementById('f-notes').value = bio.notes || '';
+    const apiUrl = `/api/v1/player/${encodeURIComponent(p.key)}`;
+    document.getElementById('api-line').innerHTML =
+        `API: <a href="${apiUrl}" target="_blank">${location.origin}${apiUrl}</a>`;
+    renderList();
+}
+
+searchEl.addEventListener('input', renderList);
+renderList();
+</script>
+</body>
+</html>

@@ -1,0 +1,925 @@
+<!--
+File: templates/stats.html
+Description: Commentary screen - live per-court match stats, win predictor and
+             commentator reference info with Socket.IO updates.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📈 Commentary</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css"/>
+
+<style>
+:root {
+    --text-light: #f5f5f7;
+    --muted-text: #a0a0b0;
+    --test-color: #ffc107;
+    --success-color: #3ddc84;
+    --error-color: #ff4b5c;
+    --border-soft: #333344;
+    --serve-color: #ffd700;
+    --p1-color: #4da3ff;
+    --p2-color: #ff7849;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 32px 16px 48px;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+    color: var(--text-light); line-height: 1.5; min-height: 100vh;
+}
+.container { max-width: 1280px; margin: 0 auto; }
+h1, h2, h3 { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1rem; }
+
+.nav-bar {
+    position: sticky; top: 0; z-index: 1000;
+    background: linear-gradient(180deg, rgba(10,10,17,0.98) 0%, rgba(10,10,17,0.95) 50%, rgba(10,10,17,0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin: -32px -16px 32px -16px; padding: 12px 16px;
+}
+.nav-content { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.nav-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-text); margin: 0; }
+.nav-links { display: flex; gap: 16px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.nav-links a {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    text-decoration: none; color: var(--muted-text); border: 1px solid transparent; transition: all 0.15s ease;
+}
+.nav-links a:hover { color: var(--text-light); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+.nav-links a.active { color: var(--test-color); background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.5); }
+
+.page-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.hint { font-size: 0.84rem; color: var(--muted-text); }
+.conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--error-color); display: inline-block; margin-right: 6px; }
+.conn-dot.online { background: var(--success-color); box-shadow: 0 0 6px var(--success-color); }
+
+.court-tabs { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+.court-tab {
+    padding: 6px 14px; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none;
+    color: var(--muted-text); border: 1px solid var(--border-soft); background: rgba(12,12,20,0.86);
+}
+.court-tab:hover { color: var(--text-light); border-color: rgba(255,255,255,0.3); }
+.court-tab.active { color: var(--test-color); border-color: rgba(255,193,7,0.6); background: rgba(255,193,7,0.14); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 20px; }
+.cards.focused { grid-template-columns: minmax(0, 760px); justify-content: center; }
+
+.card {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.card-head h2 { margin: 0; color: var(--test-color); }
+.card-head h2 a { color: inherit; text-decoration: none; }
+.card-head h2 a:hover { text-decoration: underline; }
+.badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+.status-badge {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border-soft); color: var(--muted-text);
+    white-space: nowrap;
+}
+.status-badge.live { color: var(--success-color); border-color: rgba(61,220,132,0.6); background: rgba(61,220,132,0.12); }
+.status-badge.upcoming { color: var(--test-color); border-color: rgba(255,193,7,0.5); background: rgba(255,193,7,0.1); }
+.sport-badge {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 2px 10px; border-radius: 999px; color: #c8b3ff;
+    border: 1px solid rgba(160,120,255,0.5); background: rgba(160,120,255,0.1); white-space: nowrap;
+}
+
+.match-name { font-size: 0.8rem; color: var(--muted-text); margin-bottom: 12px; min-height: 1.2em; }
+
+.score-table { width: 100%; border-collapse: collapse; }
+.score-table td { padding: 8px 6px; border-top: 1px solid rgba(255,255,255,0.07); vertical-align: middle; }
+.player-cell { width: 100%; }
+.player-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.serve-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: transparent; }
+.serve-dot.on { background: var(--serve-color); box-shadow: 0 0 6px var(--serve-color); }
+.player-name { font-weight: 700; font-size: 1.02rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-name.winner { color: var(--success-color); }
+.player-country { font-size: 0.72rem; color: var(--muted-text); }
+
+.set-cell {
+    display: inline-block; min-width: 30px; padding: 3px 4px; margin: 0 2px; text-align: center;
+    font-size: 0.92rem; font-weight: 600; color: #dddddd; border-radius: 6px;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.16);
+}
+.set-cell.won { background: rgba(61,220,132,0.28); border-color: rgba(61,220,132,0.8); color: #fff; }
+.set-cell sup { font-size: 0.62em; margin-left: 1px; color: var(--muted-text); }
+.sets-cell { text-align: right; white-space: nowrap; }
+
+.game-cell {
+    text-align: right; font-size: 1.3rem; font-weight: 800; color: var(--serve-color);
+    min-width: 52px; font-variant-numeric: tabular-nums;
+}
+
+/* Win predictor */
+.predict-block { margin-top: 14px; }
+.predict-head { display: flex; justify-content: space-between; align-items: baseline; }
+.predict-label {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted-text);
+}
+.predict-pcts { display: flex; justify-content: space-between; font-size: 0.86rem; font-weight: 700; margin-bottom: 4px; }
+.predict-pcts .p1 { color: var(--p1-color); }
+.predict-pcts .p2 { color: var(--p2-color); }
+.predict-bar {
+    height: 10px; border-radius: 999px; overflow: hidden; display: flex;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+}
+.predict-bar .fill-p1 { background: linear-gradient(90deg, #2d6fd1, var(--p1-color)); transition: width 0.6s ease; }
+.predict-bar .fill-p2 { background: linear-gradient(90deg, var(--p2-color), #d14a2d); flex: 1; transition: width 0.6s ease; }
+
+/* Derived stats */
+.stats-block { margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 10px; }
+.stats-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; padding: 3px 0; font-size: 0.88rem; }
+.stats-row .v1 { text-align: right; font-weight: 700; color: var(--p1-color); font-variant-numeric: tabular-nums; }
+.stats-row .v2 { text-align: left; font-weight: 700; color: var(--p2-color); font-variant-numeric: tabular-nums; }
+.stats-row .label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-text); text-align: center; min-width: 110px; }
+.stats-row .lead { color: #fff; }
+
+.extra-line {
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.07);
+    font-size: 0.8rem; color: var(--muted-text);
+}
+.extra-line strong { color: var(--text-light); font-weight: 600; }
+.extra-label {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted-text); display: block; margin-bottom: 2px;
+}
+.lta-links a { color: #8ab4ff; text-decoration: none; margin-right: 10px; white-space: nowrap; }
+.lta-links a:hover { text-decoration: underline; }
+.player-bio { padding: 4px 0; font-size: 0.84rem; color: var(--text-light); }
+.player-bio strong { font-weight: 700; }
+.bio-muted { color: var(--muted-text); }
+.bio-notes { font-size: 0.8rem; color: var(--muted-text); font-style: italic; margin-top: 2px; }
+.player-bio a { color: #8ab4ff; text-decoration: none; }
+.player-bio a:hover { text-decoration: underline; }
+
+.empty-card { color: var(--muted-text); font-size: 0.9rem; padding: 12px 0; }
+.updated-line { margin-top: 20px; font-size: 0.78rem; color: var(--muted-text); text-align: center; }
+.disclaimer { margin-top: 6px; font-size: 0.7rem; color: var(--muted-text); text-align: center; opacity: 0.8; }
+
+/* Progression charts */
+.chart-block { margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); padding-top: 10px; }
+.chart-title {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted-text); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: baseline;
+}
+.chart-legend { display: flex; gap: 14px; font-size: 0.72rem; color: var(--muted-text); text-transform: none; letter-spacing: 0; font-weight: 500; }
+.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.chart-svg { width: 100%; height: auto; display: block; cursor: crosshair; }
+.chart-note { font-size: 0.78rem; color: var(--muted-text); padding: 6px 0; }
+.chart-tooltip {
+    position: fixed; z-index: 2000; pointer-events: none; display: none;
+    background: rgba(8,8,14,0.96); border: 1px solid var(--border-soft); border-radius: 8px;
+    padding: 8px 10px; font-size: 0.76rem; color: var(--text-light); box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+    max-width: 240px;
+}
+.chart-tooltip .tt-time { color: var(--muted-text); }
+details.data-table { margin-top: 8px; }
+details.data-table summary { cursor: pointer; font-size: 0.72rem; color: var(--muted-text); text-transform: uppercase; letter-spacing: 0.1em; }
+details.data-table table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 0.76rem; }
+details.data-table th, details.data-table td { padding: 3px 8px; text-align: left; border-top: 1px solid rgba(255,255,255,0.07); color: var(--muted-text); }
+details.data-table th { color: var(--text-light); font-weight: 600; }
+</style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/live_matches">🎬 Live Matches</a></li>
+            <li><a href="/stats" class="active">📈 Commentary</a></li>
+            <li><a href="/players">👤 Players</a></li>
+            <li><a href="/api_links">🔗 API Links</a></li>
+            <li><a href="/results">📋 Results</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+            <li><a href="/help">❓ Help</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="page-head">
+        <h1>📈 Commentary</h1>
+        <span class="hint"><span id="conn-dot" class="conn-dot"></span><span id="conn-text">Connecting…</span></span>
+    </div>
+    <p class="hint">Live scores with win predictor, derived match statistics, serve indicator and LTA player lookup. Updates automatically.</p>
+
+    <div id="court-tabs" class="court-tabs"></div>
+    <div id="cards" class="cards"></div>
+    <div class="updated-line">Last update: <span id="last-updated">–</span></div>
+    <div class="disclaimer">Win predictor is an estimate computed from the live score (Markov model), not an official statistic.</div>
+</div>
+
+<script id="stats-config" type="application/json">{{ {"court": court, "pinned_courts": pinned_courts} | tojson }}</script>
+<script>
+const CONFIG = JSON.parse(document.getElementById('stats-config').textContent);
+const FOCUS_COURT = String(CONFIG.court || '').trim();
+const PINNED = CONFIG.pinned_courts || [];
+const MAX_SETS = 11;
+
+let allMatches = [];
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+const isoMap = {
+    'GBR':'gb','ESP':'es','SRB':'rs','FRA':'fr','GER':'de','USA':'us','CAN':'ca','AUS':'au',
+    'NED':'nl','SUI':'ch','ITA':'it','CRO':'hr','POL':'pl','SWE':'se','NOR':'no','ARG':'ar',
+    'BRA':'br','ROU':'ro','DEN':'dk','POR':'pt','BEL':'be','FIN':'fi','CHN':'cn','JPN':'jp',
+    'HUN':'hu','IRL':'ie','SCO':'gb-sct','WAL':'gb-wls'
+};
+function toISO2(c){ c = String(c || '').toUpperCase(); return isoMap[c] || c.toLowerCase().slice(0,2); }
+function toInt(v){ const n = parseInt(v, 10); return Number.isNaN(n) ? 0 : n; }
+
+function statusBucket(m){
+    const s = String(m.matchstatus || '').toUpperCase();
+    if (m.is_plan || s === 'UPCOMING') return 'UPCOMING';
+    if (['IN PROGRESS','WARMUP','TEST'].some(k => s.includes(k))) return 'LIVE';
+    return 'COMPLETED';
+}
+
+function isPadel(m){
+    return `${m.tname || ''} ${m.matchname || ''}`.toLowerCase().includes('padel');
+}
+
+function matchesForCourt(court){
+    return allMatches.filter(m => String(m.court || '').trim() === court);
+}
+
+function pickCurrent(ms){
+    return ms.find(m => statusBucket(m) === 'LIVE')
+        || ms.filter(m => statusBucket(m) === 'UPCOMING').sort((a,b) => String(a.schedtime||'').localeCompare(String(b.schedtime||'')))[0]
+        || ms.slice().sort((a,b) => (b.timestamp||0) - (a.timestamp||0))[0]
+        || null;
+}
+
+// Completed sets as [p1Games, p2Games] pairs plus the in-progress set (if any).
+function parseSets(m){
+    const played = Number(m.sets_played_count) || 0;
+    const sets = [];
+    for (let i = 1; i <= Math.min(played, MAX_SETS); i++){
+        const v1 = toInt(m[`set${i}_p1`]);
+        const v2 = toInt(m[`set${i}_p2`]);
+        if (v1 === 0 && v2 === 0 && i > 1) continue;
+        sets.push([v1, v2]);
+    }
+    return sets;
+}
+
+function isSetWon(g, o){
+    if (g >= 6 && g - o >= 2) return true;
+    if (g === 7 && (o === 5 || o === 6)) return true;
+    if (g >= 10 && g - o >= 2) return true;   // 10-point match tiebreak
+    return false;
+}
+
+// ====================================================================
+// Win predictor: Barnett-Clarke style Markov chain from the live score.
+// p  = P(side 1 wins a point on their own serve)
+// q  = P(side 1 wins a point returning)
+// ====================================================================
+
+const POINT_MAP = { '0':0, '00':0, '15':1, '30':2, '40':3, 'AD':4, 'A':4 };
+
+function gameWinProb(p, pts1, pts2){
+    // P(side 1 wins the current standard game), server point-win prob p for side 1.
+    if (pts1 >= 4 && pts1 - pts2 >= 2) return 1;
+    if (pts2 >= 4 && pts2 - pts1 >= 2) return 0;
+    if (pts1 >= 3 && pts2 >= 3){
+        // Deuce/advantage states
+        const pD = (p*p) / (p*p + (1-p)*(1-p)); // win from deuce
+        if (pts1 === pts2) return pD;
+        return pts1 > pts2 ? p + (1-p)*pD : p*pD;
+    }
+    return p * gameWinProb(p, pts1+1, pts2) + (1-p) * gameWinProb(p, pts1, pts2+1);
+}
+
+function tiebreakWinProb(r, pts1, pts2, target){
+    // Simplified: single point-win prob r (serve rotation averaged out).
+    const memo = new Map();
+    function f(a, b){
+        if (a >= target && a - b >= 2) return 1;
+        if (b >= target && b - a >= 2) return 0;
+        if (a >= target - 1 && b >= target - 1){
+            return (r*r) / (r*r + (1-r)*(1-r));
+        }
+        const key = a * 100 + b;
+        if (memo.has(key)) return memo.get(key);
+        const v = r * f(a+1, b) + (1-r) * f(a, b+1);
+        memo.set(key, v);
+        return v;
+    }
+    return f(pts1, pts2);
+}
+
+function setWinProb(p, q, g1, g2, side1Serving){
+    // P(side 1 wins the set) from games g1-g2, with a 7-point TB at 6-6.
+    const r = (p + q) / 2;
+    const memo = new Map();
+    function f(a, b, serving){
+        if (a >= 6 && a - b >= 2) return 1;
+        if (b >= 6 && b - a >= 2) return 0;
+        if (a === 7) return 1;
+        if (b === 7) return 0;
+        if (a === 6 && b === 6) return tiebreakWinProb(r, 0, 0, 7);
+        const key = `${a},${b},${serving}`;
+        if (memo.has(key)) return memo.get(key);
+        const winGame = serving ? gameWinProb(p, 0, 0) : 1 - gameWinProb(1-q, 0, 0);
+        const v = winGame * f(a+1, b, !serving) + (1-winGame) * f(a, b+1, !serving);
+        memo.set(key, v);
+        return v;
+    }
+    return f(g1, g2, side1Serving);
+}
+
+function winPredictor(m){
+    const bucket = statusBucket(m);
+    if (bucket === 'COMPLETED'){
+        if (!m.winner_name) return null;
+        return m.winner_name === m.player1 ? 100 : 0;
+    }
+    if (bucket !== 'LIVE') return 50;
+
+    const padel = isPadel(m);
+    const sets = parseSets(m);
+
+    // Serve-point prior: tennis servers dominate, padel much less so.
+    let p = padel ? 0.54 : 0.62;
+    let q = 1 - p;
+
+    // Blend in observed performance (total games won) as a small adjustment.
+    let games1 = 0, games2 = 0, setsWon1 = 0, setsWon2 = 0;
+    sets.forEach(([a, b]) => {
+        games1 += a; games2 += b;
+        if (isSetWon(a, b)) setsWon1++;
+        else if (isSetWon(b, a)) setsWon2++;
+    });
+    const totalGames = games1 + games2;
+    if (totalGames >= 4){
+        const edge = (games1 / totalGames - 0.5) * 0.16; // max ±0.08 swing
+        p = Math.min(0.85, Math.max(0.15, p + edge));
+        q = Math.min(0.85, Math.max(0.15, q + edge));
+    }
+
+    const bestOf = 3, setsToWin = 2;
+    if (setsWon1 >= setsToWin) return 100;
+    if (setsWon2 >= setsToWin) return 0;
+
+    // Current set state (last parsed pair unless it's already decided)
+    let curG1 = 0, curG2 = 0;
+    if (sets.length){
+        const [a, b] = sets[sets.length - 1];
+        if (!isSetWon(a, b) && !isSetWon(b, a)){ curG1 = a; curG2 = b; }
+    }
+
+    const serveVal = String(m.player2serve || '');
+    const side1Serving = serveVal !== '2'; // "1" = side 1 serves; default side 1
+
+    // Current game points ("00"/"15"/"30"/"40"/"AD", or tiebreak points)
+    const rawPts1 = String(m.game1 || '').trim();
+    const rawPts2 = String(m.game2 || '').trim();
+    let gameP; // P(side 1 wins current game)
+    const inTiebreak = curG1 === 6 && curG2 === 6;
+    if (inTiebreak){
+        const r = (p + q) / 2;
+        gameP = tiebreakWinProb(r, toInt(rawPts1), toInt(rawPts2), 7);
+    } else {
+        const pts1 = POINT_MAP[rawPts1] ?? 0;
+        const pts2 = POINT_MAP[rawPts2] ?? 0;
+        gameP = side1Serving ? gameWinProb(p, pts1, pts2) : 1 - gameWinProb(1-q, pts2, pts1);
+    }
+
+    // P(side 1 wins current set) = P(win game)*P(set | game won) + ...
+    let setP;
+    if (inTiebreak){
+        setP = gameP;
+    } else {
+        setP = gameP * setWinProb(p, q, curG1+1, curG2, !side1Serving)
+             + (1-gameP) * setWinProb(p, q, curG1, curG2+1, !side1Serving);
+    }
+
+    // Fresh-set win prob for the sides (for any remaining sets)
+    const freshSet = setWinProb(p, q, 0, 0, true);
+
+    // Match prob over remaining sets (best of 3)
+    function matchProb(s1, s2, curSetP){
+        if (s1 >= setsToWin) return 1;
+        if (s2 >= setsToWin) return 0;
+        const sp = curSetP != null ? curSetP : freshSet;
+        return sp * matchProb(s1+1, s2, null) + (1-sp) * matchProb(s1, s2+1, null);
+    }
+    const prob = matchProb(setsWon1, setsWon2, setP);
+    return Math.round(Math.min(0.999, Math.max(0.001, prob)) * 1000) / 10;
+}
+
+// ====================================================================
+// Rendering
+// ====================================================================
+
+function setsHTML(m, who){
+    const sets = parseSets(m);
+    let html = '';
+    sets.forEach(([v1, v2], idx) => {
+        const i = idx + 1;
+        const mine = who === 1 ? v1 : v2;
+        const won = who === 1 ? isSetWon(v1, v2) : isSetWon(v2, v1);
+        const tb = String(m[`set${i}_tb`] || '').trim();
+        html += `<span class="set-cell${won ? ' won' : ''}">${mine}${tb ? `<sup>${esc(tb)}</sup>` : ''}</span>`;
+    });
+    return html || '<span class="set-cell">–</span>';
+}
+
+// Full competitor name for a side: each player's bio display name when one is
+// saved (via /players), falling back to the feed name.
+function fullSideName(raw){
+    const entries = sideEntries(raw);
+    if (!entries.length) return '';
+    return entries.map(p => {
+        const d = playerCache.get(p.key);
+        return (d && d.name) ? d.name : p.name;
+    }).join(' / ');
+}
+
+function playerRowHTML(m, who, live){
+    const raw = who === 1 ? (m.player1_full || m.player1) : (m.player2_full || m.player2);
+    const name = fullSideName(raw) || (who === 1 ? (m.player1 || 'Player 1') : (m.player2 || 'Player 2'));
+    const country = who === 1 ? m.player1_country : m.player2_country;
+    // player2serve: "1" = side 1 serving, "2" = side 2 serving
+    const serving = live && String(m.player2serve || '') === String(who);
+    const isWinner = m.winner_name && m.winner_name === name;
+    const game = live ? (who === 1 ? (m.game1 || '0') : (m.game2 || '0')) : '';
+    const flag = toISO2(country);
+    return `<tr>
+        <td class="player-cell">
+            <div class="player-line">
+                <span class="serve-dot${serving ? ' on' : ''}"></span>
+                ${flag ? `<span class="flag-icon flag-icon-${esc(flag)}"></span>` : ''}
+                <span class="player-name${isWinner ? ' winner' : ''}" style="color:${isWinner ? '' : (who === 1 ? 'var(--p1-color)' : 'var(--p2-color)')}">${esc(name)}</span>
+                ${country ? `<span class="player-country">${esc(country)}</span>` : ''}
+            </div>
+        </td>
+        <td class="sets-cell">${setsHTML(m, who)}</td>
+        <td class="game-cell">${esc(game)}</td>
+    </tr>`;
+}
+
+function badgeHTML(m){
+    const bucket = statusBucket(m);
+    const cls = bucket === 'LIVE' ? ' live' : bucket === 'UPCOMING' ? ' upcoming' : '';
+    const label = bucket === 'UPCOMING' && m.schedtime ? m.schedtime : (m.matchstatus || bucket);
+    return `<span class="status-badge${cls}">${esc(label)}</span>`;
+}
+
+function predictorHTML(m){
+    const pct = winPredictor(m);
+    if (pct == null) return '';
+    const p1 = pct, p2 = Math.round((100 - pct) * 10) / 10;
+    return `<div class="predict-block">
+        <div class="predict-pcts"><span class="p1">${p1}%</span><span class="predict-label">Win predictor</span><span class="p2">${p2}%</span></div>
+        <div class="predict-bar"><div class="fill-p1" style="width:${p1}%"></div><div class="fill-p2"></div></div>
+    </div>`;
+}
+
+function statRow(label, v1, v2, fmt){
+    const f = fmt || (x => x);
+    const lead1 = v1 > v2 ? ' lead' : '', lead2 = v2 > v1 ? ' lead' : '';
+    return `<div class="stats-row">
+        <span class="v1${lead1}">${f(v1)}</span><span class="label">${esc(label)}</span><span class="v2${lead2}">${f(v2)}</span>
+    </div>`;
+}
+
+function derivedStatsHTML(m){
+    const sets = parseSets(m);
+    let games1 = 0, games2 = 0, setsWon1 = 0, setsWon2 = 0, tb1 = 0, tb2 = 0;
+    let curSet = null;
+    sets.forEach(([a, b], idx) => {
+        games1 += a; games2 += b;
+        const won1 = isSetWon(a, b), won2 = isSetWon(b, a);
+        if (won1) setsWon1++;
+        if (won2) setsWon2++;
+        const tb = String(m[`set${idx+1}_tb`] || '').trim();
+        if (tb){ if (won1) tb1++; else if (won2) tb2++; }
+        if (!won1 && !won2) curSet = [a, b];
+    });
+    const total = games1 + games2;
+    const pc1 = total ? Math.round(games1 / total * 100) : 0;
+    const pc2 = total ? 100 - pc1 : 0;
+
+    let html = '<div class="stats-block">';
+    html += statRow('Sets', setsWon1, setsWon2);
+    html += statRow('Games won', games1, games2);
+    if (total) html += statRow('Games %', pc1, pc2, x => x + '%');
+    if (tb1 || tb2) html += statRow('Tiebreaks won', tb1, tb2);
+    if (curSet) html += statRow('Current set', curSet[0], curSet[1]);
+    html += '</div>';
+    return html;
+}
+
+// ====================================================================
+// Score progression charts (focused court only)
+// History arrives once over REST; new points append from Socket.IO pushes.
+// ====================================================================
+
+// Chart series colors validated for CVD + contrast on this dark surface.
+const CHART_C1 = '#3b8ae0';
+const CHART_C2 = '#e06a35';
+
+let histMatchId = null;
+let histPoints = [];
+let histLoaded = false;
+let chartStates = []; // derived per-point states for tooltip lookup
+
+function stripTB(score){ return String(score || '').replace(/\(.*?\)/g, '').trim(); }
+
+function scoreLineOf(m){
+    return parseSets(m).map(([a, b]) => `${a}-${b}`).join(' ');
+}
+
+function pointState(pt, base){
+    const sets = stripTB(pt.score) ? stripTB(pt.score).split(/\s+/).map(s => {
+        const ab = s.split('-').map(n => parseInt(n, 10) || 0);
+        return [ab[0] || 0, ab[1] || 0];
+    }) : [];
+    const games1 = sets.reduce((a, [x]) => a + x, 0);
+    const games2 = sets.reduce((a, [, y]) => a + y, 0);
+
+    const pm = {
+        matchstatus: '(in progress)', is_plan: 0, winner_name: '',
+        tname: base.tname, matchname: base.matchname,
+        player2serve: pt.serve, game1: pt.game1, game2: pt.game2,
+        sets_played_count: sets.length
+    };
+    sets.forEach(([a, b], i) => { pm[`set${i+1}_p1`] = a; pm[`set${i+1}_p2`] = b; pm[`set${i+1}_tb`] = ''; });
+
+    return {
+        ts: pt.ts, games1, games2,
+        prob: winPredictor(pm),
+        score: pt.score, g1: pt.game1, g2: pt.game2
+    };
+}
+
+function syncHistory(){
+    if (!FOCUS_COURT) return;
+    const cur = pickCurrent(matchesForCourt(FOCUS_COURT));
+    if (!cur){ histMatchId = null; histPoints = []; histLoaded = false; return; }
+
+    if (String(cur.matchid) !== String(histMatchId)){
+        histMatchId = String(cur.matchid);
+        histPoints = [];
+        histLoaded = false;
+        const wanted = histMatchId;
+        fetch(`/api/v1/match/${encodeURIComponent(wanted)}/history`)
+            .then(r => r.json())
+            .then(j => {
+                if (String(histMatchId) !== wanted) return; // court moved on
+                histPoints = j.points || [];
+                histLoaded = true;
+                render();
+            })
+            .catch(() => { histLoaded = true; });
+        return;
+    }
+
+    // Append a live point when the pushed score state differs from the last one
+    if (histLoaded && statusBucket(cur) === 'LIVE'){
+        const last = histPoints[histPoints.length - 1];
+        const curScore = scoreLineOf(cur);
+        const changed = !last
+            || stripTB(last.score) !== curScore
+            || String(last.game1 || '') !== String(cur.game1 || '')
+            || String(last.game2 || '') !== String(cur.game2 || '');
+        if (changed){
+            histPoints.push({
+                ts: Math.floor(Date.now() / 1000), score: curScore,
+                game1: cur.game1, game2: cur.game2,
+                serve: cur.player2serve, matchstatus: cur.matchstatus
+            });
+        }
+    }
+}
+
+function svgPath(points, step){
+    let d = '';
+    points.forEach(([x, y], i) => {
+        if (i === 0) d = `M${x},${y}`;
+        else if (step) d += `H${x}V${y}`;
+        else d += `L${x},${y}`;
+    });
+    return d;
+}
+
+function buildChartSVG(kind, states, m){
+    const W = 640, H = 150, L = 34, R = 12, T = 10, B = 20;
+    const iw = W - L - R, ih = H - T - B;
+    const n = states.length;
+    const x = i => L + (n === 1 ? iw / 2 : i * iw / (n - 1));
+
+    let yMax, ySeries, gridVals;
+    if (kind === 'games'){
+        yMax = Math.max(6, ...states.map(s => Math.max(s.games1, s.games2))) + 1;
+        ySeries = [states.map(s => s.games1), states.map(s => s.games2)];
+        gridVals = [];
+        for (let g = 0; g <= yMax; g += (yMax > 12 ? 4 : 2)) gridVals.push(g);
+    } else {
+        yMax = 100;
+        ySeries = [states.map(s => s.prob == null ? 50 : s.prob)];
+        gridVals = [0, 25, 50, 75, 100];
+    }
+    const y = v => T + ih - (v / yMax) * ih;
+
+    let g = '';
+    gridVals.forEach(v => {
+        const mid = kind === 'prob' && v === 50;
+        g += `<line x1="${L}" y1="${y(v)}" x2="${W-R}" y2="${y(v)}" stroke="rgba(255,255,255,${mid ? 0.22 : 0.08})" stroke-width="1"${mid ? ' stroke-dasharray="4 4"' : ''}/>`;
+        g += `<text x="${L-6}" y="${y(v)+3}" text-anchor="end" font-size="9" fill="#a0a0b0">${v}${kind === 'prob' ? '%' : ''}</text>`;
+    });
+
+    const colors = kind === 'games' ? [CHART_C1, CHART_C2] : [CHART_C1];
+    ySeries.forEach((vals, si) => {
+        const pts = vals.map((v, i) => [x(i), y(v)]);
+        g += `<path d="${svgPath(pts, kind === 'games')}" fill="none" stroke="${colors[si]}" stroke-width="2" stroke-linejoin="round"/>`;
+        const [lx, ly] = pts[pts.length - 1];
+        g += `<circle cx="${lx}" cy="${ly}" r="3" fill="${colors[si]}"/>`;
+        const lastVal = vals[vals.length - 1];
+        g += `<text x="${Math.min(lx + 5, W - 2)}" y="${ly + 3}" font-size="10" font-weight="600" fill="#f5f5f7">${kind === 'prob' ? lastVal + '%' : lastVal}</text>`;
+    });
+
+    g += `<line id="xhair-${kind}" x1="0" y1="${T}" x2="0" y2="${T+ih}" stroke="rgba(255,255,255,0.35)" stroke-width="1" style="display:none"/>`;
+
+    return `<svg class="chart-svg chart-hit" data-kind="${kind}" viewBox="0 0 ${W} ${H}"
+                 data-l="${L}" data-r="${R}" data-w="${W}" role="img"
+                 aria-label="${kind === 'games' ? 'Games won progression' : 'Win probability progression'}">${g}</svg>`;
+}
+
+function chartsHTML(m){
+    if (!FOCUS_COURT) return '';
+    if (String(m.matchid) !== String(histMatchId)) return '';
+    if (!histLoaded) return '<div class="chart-block"><div class="chart-note">Loading score progression…</div></div>';
+
+    chartStates = histPoints.map(p => pointState(p, m));
+    if (chartStates.length < 2){
+        return '<div class="chart-block"><div class="chart-note">Score progression and win-predictor graphs will build here as the match develops (one point per score change).</div></div>';
+    }
+
+    const side1 = sideEntries(m.player1_full || m.player1).map(p => p.name).join(' / ') || 'Side 1';
+    const side2 = sideEntries(m.player2_full || m.player2).map(p => p.name).join(' / ') || 'Side 2';
+
+    const tableRows = chartStates.map(s => `
+        <tr><td>${new Date(s.ts * 1000).toLocaleTimeString()}</td><td>${esc(stripTB(s.score) || '0-0')}</td>
+        <td>${esc(String(s.g1 || '')) } - ${esc(String(s.g2 || ''))}</td><td>${s.prob == null ? '–' : s.prob + '%'}</td></tr>`).join('');
+
+    return `
+    <div class="chart-block">
+        <div class="chart-title"><span>Games won · progression</span>
+            <span class="chart-legend">
+                <span><span class="legend-swatch" style="background:${CHART_C1}"></span>${esc(side1)}</span>
+                <span><span class="legend-swatch" style="background:${CHART_C2}"></span>${esc(side2)}</span>
+            </span>
+        </div>
+        ${buildChartSVG('games', chartStates, m)}
+    </div>
+    <div class="chart-block">
+        <div class="chart-title"><span>Win probability — ${esc(side1)}</span></div>
+        ${buildChartSVG('prob', chartStates, m)}
+        <details class="data-table"><summary>Data table</summary>
+            <table><tr><th>Time</th><th>Sets</th><th>Game</th><th>Win %</th></tr>${tableRows}</table>
+        </details>
+    </div>`;
+}
+
+// LTA player lookup: split doubles pairs and strip "(GBR)" style suffixes.
+function sideEntries(raw){
+    return String(raw || '').split('/').map(part => {
+        const cm = part.match(/\(([A-Za-z]{2,3})\)/);
+        const name = part.replace(/\([A-Za-z]{2,3}\)/g, '').replace(/\s+/g, ' ').trim();
+        return name && name.toUpperCase() !== 'TBC'
+            ? { name, key: name.toUpperCase(), country: cm ? cm[1].toUpperCase() : '' }
+            : null;
+    }).filter(Boolean);
+}
+
+function matchPlayerEntries(m){
+    return [
+        ...sideEntries(m.player1_full || m.player1),
+        ...sideEntries(m.player2_full || m.player2)
+    ];
+}
+
+// Player bios + tournament records from our own API (/api/v1/player/<name>)
+const playerCache = new Map();
+function ensurePlayerData(entries){
+    entries.forEach(p => {
+        if (playerCache.has(p.key)) return;
+        playerCache.set(p.key, null); // mark as loading
+        fetch(`/api/v1/player/${encodeURIComponent(p.key)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(j => { playerCache.set(p.key, j); if (j) render(); })
+            .catch(() => {});
+    });
+}
+
+function playerInfoHTML(m){
+    const entries = matchPlayerEntries(m);
+    if (!entries.length) return '';
+    ensurePlayerData(entries);
+
+    const blocks = entries.map(p => {
+        const d = playerCache.get(p.key);
+        if (!d) return `<div class="player-bio"><strong>${esc(p.name)}</strong> <span class="bio-muted">· no data yet - <a href="/players" target="_blank">add a bio</a></span></div>`;
+        const bits = [];
+        if (d.tournament_wins + d.tournament_losses > 0) bits.push(`This event: <strong>${d.tournament_record}</strong>`);
+        if (d.last_result) bits.push(`Last: ${esc(d.last_result)}`);
+        if (d.born) bits.push(`Born: ${esc(d.born)}`);
+        if (d.plays) bits.push(esc(d.plays));
+        if (d.hometown) bits.push(esc(d.hometown));
+        if (d.career) bits.push(esc(d.career));
+        return `<div class="player-bio">
+            <strong>${esc(d.name || p.name)}</strong>${d.country ? ` <span class="bio-muted">${esc(d.country)}</span>` : ''}
+            ${bits.length ? `<span class="bio-muted"> — ${bits.join(' · ')}</span>` : ''}
+            ${d.notes ? `<div class="bio-notes">📝 ${esc(d.notes)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    return `<div class="extra-line"><span class="extra-label">Player info · tournament record</span>${blocks}</div>`;
+}
+
+function ltaLinksHTML(m){
+    const names = matchPlayerEntries(m).map(p => p.name);
+    if (!names.length) return '';
+    const links = names.map(n =>
+        `<a href="https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(n)}" target="_blank" rel="noopener">${esc(n)} ↗</a>`
+    ).join('');
+    return `<div class="extra-line lta-links"><span class="extra-label">LTA player lookup</span>${links}</div>`;
+}
+
+function oneLineScore(m){
+    return parseSets(m).map(([a, b]) => `${a}-${b}`).join(' ');
+}
+
+function courtCardHTML(court){
+    const ms = matchesForCourt(court);
+    const current = pickCurrent(ms);
+    const title = FOCUS_COURT
+        ? esc(court)
+        : `<a href="/stats?court=${encodeURIComponent(court)}">${esc(court)}</a>`;
+
+    if (!current){
+        return `<div class="card">
+            <div class="card-head"><h2>🎾 ${title}</h2></div>
+            <div class="empty-card">No match data for this court yet.</div>
+        </div>`;
+    }
+
+    const live = statusBucket(current) === 'LIVE';
+    const padel = isPadel(current);
+    const upNext = ms.filter(m => m !== current && statusBucket(m) === 'UPCOMING')
+        .sort((a,b) => String(a.schedtime||'').localeCompare(String(b.schedtime||'')))[0];
+    const lastDone = ms.filter(m => m !== current && statusBucket(m) === 'COMPLETED')
+        .sort((a,b) => (b.timestamp||0) - (a.timestamp||0))[0];
+
+    let extras = '';
+    if (upNext){
+        extras += `<div class="extra-line"><span class="extra-label">Up next</span>
+            <strong>${esc(upNext.player1 || 'TBC')}</strong> vs <strong>${esc(upNext.player2 || 'TBC')}</strong>
+            ${upNext.schedtime ? ` · ${esc(upNext.schedtime)}` : ''}</div>`;
+    }
+    if (lastDone){
+        extras += `<div class="extra-line"><span class="extra-label">Last result</span>
+            <strong>${esc(lastDone.winner_name || lastDone.player1 || '')}</strong>
+            ${lastDone.winner_name ? 'def.' : 'vs'}
+            ${esc(lastDone.winner_name === lastDone.player2 ? lastDone.player1 : lastDone.player2) || ''}
+            ${oneLineScore(lastDone) ? ` · ${esc(oneLineScore(lastDone))}` : ''}</div>`;
+    }
+    extras += playerInfoHTML(current);
+    extras += ltaLinksHTML(current);
+
+    const eventLine = [current.tname, current.matchname].filter(Boolean).map(esc).join(' · ');
+
+    return `<div class="card">
+        <div class="card-head">
+            <h2>🎾 ${title}</h2>
+            <div class="badges">
+                <span class="sport-badge">${padel ? '🥎 Padel' : '🎾 Tennis'}</span>
+                ${badgeHTML(current)}
+            </div>
+        </div>
+        <div class="match-name">${eventLine}</div>
+        <table class="score-table">
+            ${playerRowHTML(current, 1, live)}
+            ${playerRowHTML(current, 2, live)}
+        </table>
+        ${predictorHTML(current)}
+        ${derivedStatsHTML(current)}
+        ${chartsHTML(current)}
+        ${extras}
+    </div>`;
+}
+
+function render(){
+    syncHistory();
+    const found = [...new Set(allMatches.map(m => String(m.court || '').trim()).filter(Boolean))];
+    const courts = [...PINNED, ...found.filter(c => !PINNED.includes(c)).sort()];
+
+    const tabs = document.getElementById('court-tabs');
+    tabs.innerHTML = `<a class="court-tab${FOCUS_COURT ? '' : ' active'}" href="/stats">All courts</a>`
+        + courts.map(c =>
+            `<a class="court-tab${c === FOCUS_COURT ? ' active' : ''}" href="/stats?court=${encodeURIComponent(c)}">${esc(c)}</a>`
+        ).join('');
+
+    const shown = FOCUS_COURT ? [FOCUS_COURT] : courts;
+    const cardsEl = document.getElementById('cards');
+    cardsEl.className = FOCUS_COURT ? 'cards focused' : 'cards';
+
+    if (!shown.length){
+        cardsEl.innerHTML = '<div class="card"><div class="empty-card">No matches in the feed yet - this page fills in automatically once scores arrive.</div></div>';
+        return;
+    }
+    cardsEl.innerHTML = shown.map(courtCardHTML).join('');
+}
+
+function setUpdated(ts){
+    document.getElementById('last-updated').textContent = ts || new Date().toLocaleTimeString();
+}
+
+function setConnected(ok){
+    document.getElementById('conn-dot').classList.toggle('online', ok);
+    document.getElementById('conn-text').textContent = ok ? 'Live' : 'Disconnected';
+}
+
+async function loadSnapshot(){
+    try {
+        const j = await (await fetch('/api/v1/scores')).json();
+        allMatches = j.matches || [];
+        render();
+        setUpdated(j.last_updated);
+    } catch(e){ console.error('Snapshot fetch failed', e); }
+}
+
+const socket = io(window.location.origin);
+socket.on('connect', () => {
+    setConnected(true);
+    socket.emit('subscribe_all');
+});
+socket.on('disconnect', () => setConnected(false));
+socket.on('live_updates', data => {
+    if (!data || !Array.isArray(data.live_matches)) return;
+    allMatches = data.live_matches;
+    render();
+    setUpdated(data.timestamp);
+});
+
+// Hover crosshair + tooltip for the progression charts (nearest score change)
+const chartTip = document.createElement('div');
+chartTip.className = 'chart-tooltip';
+document.body.appendChild(chartTip);
+
+document.getElementById('cards').addEventListener('mousemove', e => {
+    const svg = e.target.closest('.chart-hit');
+    if (!svg || chartStates.length < 2){ chartTip.style.display = 'none'; return; }
+
+    const rect = svg.getBoundingClientRect();
+    const W = +svg.dataset.w, L = +svg.dataset.l, R = +svg.dataset.r;
+    const vx = (e.clientX - rect.left) / rect.width * W;
+    const n = chartStates.length;
+    const i = Math.max(0, Math.min(n - 1, Math.round((vx - L) / ((W - L - R) / (n - 1)))));
+    const s = chartStates[i];
+
+    const xhair = svg.querySelector(`#xhair-${svg.dataset.kind}`);
+    if (xhair){
+        const cx = L + i * (W - L - R) / (n - 1);
+        xhair.setAttribute('x1', cx); xhair.setAttribute('x2', cx);
+        xhair.style.display = '';
+    }
+
+    chartTip.innerHTML = `
+        <div class="tt-time">${new Date(s.ts * 1000).toLocaleTimeString()}</div>
+        <div>Sets: <strong>${esc(stripTB(s.score) || '0-0')}</strong> · Game: ${esc(String(s.g1 || '00'))}-${esc(String(s.g2 || '00'))}</div>
+        <div>Games won: <strong>${s.games1}-${s.games2}</strong>${s.prob != null ? ` · Win: <strong>${s.prob}%</strong>` : ''}</div>`;
+    chartTip.style.display = 'block';
+    chartTip.style.left = Math.min(e.clientX + 14, window.innerWidth - 250) + 'px';
+    chartTip.style.top = (e.clientY + 14) + 'px';
+});
+
+document.getElementById('cards').addEventListener('mouseleave', () => {
+    chartTip.style.display = 'none';
+    document.querySelectorAll('.chart-hit line[id^=xhair]').forEach(l => l.style.display = 'none');
+}, true);
+
+loadSnapshot();
+</script>
+</body>
+</html>

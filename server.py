@@ -38,13 +38,13 @@ XML_BASE_URL = "https://scores.tennisticker.de/scoreboard/livescores.aspx?"
 DB_NAME = os.getenv("SQLITE_DB_PATH", "casparcg_match_cache.db")
 
 SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "5"))
-CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '7140')
+CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '13')
 ENABLE_SCRAPER = os.getenv("ENABLE_SCRAPER", "true").strip().lower() in ("1", "true", "yes", "on")
 SERVER_PORT = int(os.getenv("PORT", "5000"))
 
 # TennisTicker feed credentials (runtime-changeable via /admin, persisted in DB)
-TT_USERID = os.getenv("TT_USERID") or "EFBBCDD3"
-TT_CONTRACT = os.getenv("TT_CONTRACT") or "ONSIDEPROD"
+TT_USERID = os.getenv("TT_USERID") or "33925432PS2018"
+TT_CONTRACT = os.getenv("TT_CONTRACT") or "SBPSID"
 
 # Admin login. If ADMIN_PASSWORD is unset the admin page is disabled.
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
@@ -243,6 +243,36 @@ class XMLCacheManager:
             );
         """)
 
+        # Player bios entered by production staff (commentator spotter data).
+        # player_key is the normalised upper-case name without country codes.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS player_bios (
+                player_key TEXT PRIMARY KEY,
+                display_name TEXT,
+                country TEXT,
+                born TEXT,
+                plays TEXT,
+                hometown TEXT,
+                career TEXT,
+                notes TEXT,
+                updated_at INTEGER
+            );
+        """)
+
+        # Score progression history, one row per score change (for commentary graphs)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS match_history (
+                matchid TEXT,
+                ts INTEGER,
+                score TEXT,
+                game1 TEXT,
+                game2 TEXT,
+                player2serve INTEGER,
+                matchstatus TEXT
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_history_mid ON match_history (matchid, ts);")
+
         self.conn.commit()
 
     def get_setting(self, key):
@@ -293,6 +323,102 @@ class XMLCacheManager:
                     self.conn.rollback()
                 except Exception:
                     pass
+
+    # ----------------------------------------------------------------
+    # Player bios (commentator spotter data entered via /players)
+    # ----------------------------------------------------------------
+
+    PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes")
+
+    def get_player_bio(self, player_key):
+        """Return the saved bio dict for a player key, or None."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                if self.param_style == 'sqlite':
+                    cursor.execute("SELECT * FROM player_bios WHERE player_key=?", (player_key,))
+                else:
+                    cursor.execute("SELECT * FROM player_bios WHERE player_key=%s", (player_key,))
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                cols = [d[0] for d in cursor.description]
+                return dict(zip(cols, row))
+            except Exception as e:
+                print(f"Error reading player bio '{player_key}': {e}")
+                return None
+
+    def get_all_player_bios(self):
+        """Return every saved player bio keyed by player_key."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT * FROM player_bios")
+                cols = [d[0] for d in cursor.description]
+                return {row[cols.index('player_key')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+            except Exception as e:
+                print(f"Error reading player bios: {e}")
+                return {}
+
+    def save_player_bio(self, player_key, fields):
+        """Insert or update a player bio. `fields` maps bio column -> value."""
+        values = {col: str(fields.get(col) or '').strip() for col in self.PLAYER_BIO_FIELDS}
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cols = ", ".join(("player_key",) + self.PLAYER_BIO_FIELDS + ("updated_at",))
+                ph = "?" if self.param_style == 'sqlite' else "%s"
+                placeholders = ", ".join([ph] * (len(self.PLAYER_BIO_FIELDS) + 2))
+                update_sql = ", ".join(
+                    f"{c}=excluded.{c}" for c in self.PLAYER_BIO_FIELDS + ("updated_at",)
+                )
+                cursor.execute(f"""
+                    INSERT INTO player_bios ({cols}) VALUES ({placeholders})
+                    ON CONFLICT (player_key) DO UPDATE SET {update_sql}
+                """, (player_key, *[values[c] for c in self.PLAYER_BIO_FIELDS], int(time.time())))
+                self.conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error saving player bio '{player_key}': {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return False
+
+    def get_match_history(self, matchid):
+        """Score progression rows for one match, oldest first (for commentary graphs)."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                if self.param_style == 'sqlite':
+                    cursor.execute(
+                        "SELECT ts, score, game1, game2, player2serve, matchstatus "
+                        "FROM match_history WHERE matchid=? ORDER BY ts ASC", (matchid,))
+                else:
+                    cursor.execute(
+                        "SELECT ts, score, game1, game2, player2serve, matchstatus "
+                        "FROM match_history WHERE matchid=%s ORDER BY ts ASC", (matchid,))
+                return [
+                    {"ts": r[0], "score": r[1], "game1": r[2], "game2": r[3],
+                     "serve": r[4], "matchstatus": r[5]}
+                    for r in cursor.fetchall()
+                ]
+            except Exception as e:
+                print(f"Error reading match history for '{matchid}': {e}")
+                return []
+
+    def get_archived_matches(self):
+        """Return all archived matches as dicts (for player tournament records)."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT * FROM matches_archive")
+                cols = [d[0] for d in cursor.description]
+                return [dict(zip(cols, row)) for row in cursor.fetchall()]
+            except Exception as e:
+                print(f"Error reading archived matches: {e}")
+                return []
 
     def archive_completed_previous_day_matches(self):
         """
@@ -378,8 +504,10 @@ class XMLCacheManager:
             try:
                 if self.param_style == 'sqlite':
                     cursor.execute("DELETE FROM matches_archive WHERE archived_at < ?", (cutoff_time,))
+                    cursor.execute("DELETE FROM match_history WHERE ts < ?", (cutoff_time,))
                 else:
                     cursor.execute("DELETE FROM matches_archive WHERE archived_at < %s", (cutoff_time,))
+                    cursor.execute("DELETE FROM match_history WHERE ts < %s", (cutoff_time,))
                 deleted_count = cursor.rowcount
                 if deleted_count > 0:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Deleted {deleted_count} archived matches older than 7 days.")
@@ -673,9 +801,13 @@ class XMLCacheManager:
                 row = cursor.fetchone()
 
                 should_update = False
+                score_changed = False
+                score_keys = ['matchstatus', 'game1', 'game2', 'player2serve'] + \
+                    [f"set{i}_p{p}" for i in range(1, MAX_SETS + 1) for p in (1, 2)]
 
                 if row is None:
                     should_update = True
+                    score_changed = True
                 else:
                     cols = [d[0] for d in cursor.description]
                     existing_data = dict(zip(cols, row))
@@ -685,6 +817,11 @@ class XMLCacheManager:
                         if existing_val != new_val:
                             should_update = True
                             break
+
+                    if should_update:
+                        score_changed = any(
+                            existing_data.get(k) != candidate_data.get(k) for k in score_keys
+                        )
 
                 # --- 5. EXECUTE DB WRITE ONLY IF CHANGED ---
                 if should_update:
@@ -709,6 +846,26 @@ class XMLCacheManager:
                     cursor.execute(sql, tuple(values))
                     updates_made += 1
                     changed_match_ids.append(match_id)
+
+                    # Record score progression for live matches (commentary graphs)
+                    if score_changed and not is_plan:
+                        try:
+                            ph = "?" if self.param_style == 'sqlite' else "%s"
+                            cursor.execute(f"""
+                                INSERT INTO match_history
+                                    (matchid, ts, score, game1, game2, player2serve, matchstatus)
+                                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+                            """, (
+                                match_id,
+                                candidate_data['timestamp'],
+                                match_score_line(candidate_data),
+                                str(candidate_data.get('game1') or ''),
+                                str(candidate_data.get('game2') or ''),
+                                int(candidate_data.get('player2serve') or 0),
+                                str(candidate_data.get('matchstatus') or '')
+                            ))
+                        except Exception as e:
+                            print(f"Error recording match history for {match_id}: {e}")
 
             self.conn.commit()
 
@@ -870,6 +1027,139 @@ def continuous_scraper_loop():
         with state_lock:
             sleep_time = SCRAPE_INTERVAL
         time.sleep(sleep_time)
+
+
+# ====================================================================
+# Helper: Player identity + tournament records (for /players and player API)
+# ====================================================================
+PLAYER_COUNTRY_RE = re.compile(r'\(([A-Za-z]{2,3})\)')
+
+
+def normalize_player_key(name):
+    """Upper-case player name with country codes and extra whitespace removed."""
+    cleaned = PLAYER_COUNTRY_RE.sub('', str(name or ''))
+    return re.sub(r'\s+', ' ', cleaned).strip().upper()
+
+
+def side_player_entries(raw):
+    """
+    Split a match side ("SKIDELSKY W (GBR) / SMITH A (GBR)") into individual
+    players: [{"name": ..., "key": ..., "country": ...}, ...].
+    """
+    entries = []
+    for part in str(raw or '').split('/'):
+        country_match = PLAYER_COUNTRY_RE.search(part)
+        display = re.sub(r'\s+', ' ', PLAYER_COUNTRY_RE.sub('', part)).strip()
+        if display:
+            entries.append({
+                "name": display,
+                "key": display.upper(),
+                "country": country_match.group(1).upper() if country_match else ""
+            })
+    return entries
+
+
+def match_score_line(match):
+    """Compact set-score line for a match, e.g. '6-3 6-4'."""
+    parts = []
+    sets_played = int(match.get('sets_played_count') or 0)
+    for i in range(1, min(sets_played, MAX_SETS) + 1):
+        try:
+            p1 = int(match.get(f'set{i}_p1') or 0)
+            p2 = int(match.get(f'set{i}_p2') or 0)
+        except (TypeError, ValueError):
+            continue
+        if p1 == 0 and p2 == 0:
+            continue
+        tb = str(match.get(f'set{i}_tb') or '').strip()
+        parts.append(f"{p1}-{p2}" + (f"({tb})" if tb else ""))
+    return " ".join(parts)
+
+
+def all_known_matches():
+    """Current cached matches plus archived ones, de-duplicated by matchid."""
+    if manager is None:
+        return []
+    matches = list(manager.get_latest_data())
+    seen = {str(m.get('matchid')) for m in matches}
+    for m in manager.get_archived_matches():
+        if str(m.get('matchid')) not in seen:
+            matches.append(m)
+    return matches
+
+
+def compute_player_record(player_key):
+    """
+    Tournament W/L and per-match results for one player, computed from our
+    own cached + archived feed data (no external sources).
+    """
+    wins = 0
+    losses = 0
+    results = []
+
+    for m in all_known_matches():
+        side1 = side_player_entries(m.get('player1_full') or m.get('player1'))
+        side2 = side_player_entries(m.get('player2_full') or m.get('player2'))
+        on1 = any(p['key'] == player_key for p in side1)
+        on2 = any(p['key'] == player_key for p in side2)
+        if not (on1 or on2):
+            continue
+
+        status = classify_match_status(m)
+        winner_code = str(m.get('winner') or '').strip()
+        result = ""
+        if status == "COMPLETED" and winner_code in ("1", "2"):
+            won = (winner_code == "1" and on1) or (winner_code == "2" and on2)
+            result = "W" if won else "L"
+            if won:
+                wins += 1
+            else:
+                losses += 1
+
+        own_side, opp_side = (side1, side2) if on1 else (side2, side1)
+        results.append({
+            "matchid": str(m.get('matchid') or ''),
+            "event": str(m.get('tname') or ''),
+            "round": str(m.get('matchname') or ''),
+            "court": str(m.get('court') or ''),
+            "status": status,
+            "result": result,
+            "partner": " / ".join(p['name'] for p in own_side if p['key'] != player_key),
+            "opponent": " / ".join(p['name'] for p in opp_side) or "TBC",
+            "score": match_score_line(m),
+            "schedtime": str(m.get('schedtime') or ''),
+            "timestamp": m.get('timestamp') or 0
+        })
+
+    results.sort(key=lambda r: r['timestamp'], reverse=True)
+    return wins, losses, results
+
+
+def collect_known_players():
+    """
+    Every individual player seen in the feed (cache + archive), merged with
+    saved bios. Returns {player_key: {"name", "country", "has_bio"}}.
+    """
+    players = {}
+    for m in all_known_matches():
+        for raw in (m.get('player1_full') or m.get('player1'),
+                    m.get('player2_full') or m.get('player2')):
+            for p in side_player_entries(raw):
+                if p['key'] in ('TBC', 'BYE', ''):
+                    continue
+                existing = players.get(p['key'])
+                if not existing:
+                    players[p['key']] = {"name": p['name'], "country": p['country'], "has_bio": False}
+                elif not existing['country'] and p['country']:
+                    existing['country'] = p['country']
+
+    if manager:
+        for key, bio in manager.get_all_player_bios().items():
+            entry = players.setdefault(key, {"name": bio.get('display_name') or key, "country": bio.get('country') or '', "has_bio": True})
+            entry['has_bio'] = True
+            if bio.get('display_name'):
+                entry['name'] = bio['display_name']
+    return players
 
 
 # ====================================================================
@@ -1203,6 +1493,31 @@ def api_links_page():
     return response
 
 
+@app.route('/stats')
+def stats_page():
+    """Commentary screen: live match stats for commentators, optionally focused on one court."""
+    court = (request.args.get('court') or '').strip()
+
+    stream_config = get_live_stream_config()
+    pinned_courts = [c for c in stream_config["stream_courts"] if c]
+
+    with state_lock:
+        tour_id = CURRENT_TOURNAMENT_ID
+        interval = SCRAPE_INTERVAL
+
+    response = make_response(render_template(
+        'stats.html',
+        court=court,
+        pinned_courts=pinned_courts,
+        tournament_id=tour_id,
+        scrape_interval=interval
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
 @app.route('/help')
 def help_page():
     return render_template("help.html")
@@ -1454,6 +1769,132 @@ def get_single_match(match_id):
             })
 
     return jsonify({"error": f"Match with ID '{match_id}' not found."}), 404
+
+
+@app.route('/api/v1/match/<match_id>/history', methods=['GET'])
+def get_match_history_api(match_id):
+    """Score progression for one match (one point per score change), for graphs."""
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+
+    points = manager.get_match_history(str(match_id))
+    return jsonify({
+        "status": "success",
+        "matchid": str(match_id),
+        "point_count": len(points),
+        "points": points
+    })
+
+
+# ====================================================================
+# Player data endpoints (bios entered via /players + computed records)
+# ====================================================================
+
+@app.route('/api/v1/players', methods=['GET'])
+def api_players_list():
+    """List every player seen in the feed with bio availability flags."""
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+
+    players = collect_known_players()
+    rows = [
+        {"player_key": key, "name": info["name"], "country": info["country"], "has_bio": info["has_bio"]}
+        for key, info in sorted(players.items())
+    ]
+    return jsonify({"status": "success", "player_count": len(rows), "players": rows})
+
+
+@app.route('/api/v1/player/<path:player_name>', methods=['GET'])
+def api_player_detail(player_name):
+    """
+    Flat, graphics-ready JSON for one player: saved bio fields plus the
+    tournament W/L record and results computed from our own cached feed data.
+    """
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+
+    player_key = normalize_player_key(player_name)
+    if not player_key:
+        return jsonify({"error": "Player name required."}), 400
+
+    bio = manager.get_player_bio(player_key) or {}
+    wins, losses, results = compute_player_record(player_key)
+
+    if not bio and not results:
+        return jsonify({"error": f"No data for player '{player_key}'."}), 404
+
+    display_name = bio.get('display_name') or player_key.title()
+    # Prefer the exact feed casing when we have seen the player in a match
+    known = collect_known_players().get(player_key)
+    if known and not bio.get('display_name'):
+        display_name = known['name']
+
+    last_completed = next((r for r in results if r['result']), None)
+
+    return jsonify({
+        "status": "success",
+        "player_key": player_key,
+        "name": display_name,
+        "country": bio.get('country') or (known['country'] if known else ''),
+        "born": bio.get('born') or '',
+        "plays": bio.get('plays') or '',
+        "hometown": bio.get('hometown') or '',
+        "career": bio.get('career') or '',
+        "notes": bio.get('notes') or '',
+        "tournament_wins": wins,
+        "tournament_losses": losses,
+        "tournament_record": f"{wins}-{losses}",
+        "last_result": (
+            f"{last_completed['result']} vs {last_completed['opponent']} {last_completed['score']}".strip()
+            if last_completed else ''
+        ),
+        "matches": results
+    })
+
+
+@app.route('/players', methods=['GET', 'POST'])
+def players_page():
+    """Player bio editor: production staff maintain commentator spotter data."""
+    message = None
+    error = None
+
+    if request.method == 'POST':
+        player_key = normalize_player_key(request.form.get('player_key') or request.form.get('display_name'))
+        if not player_key:
+            error = "Player name is required."
+        elif manager is None:
+            error = "Database not ready yet - try again shortly."
+        else:
+            fields = {col: request.form.get(col, '') for col in manager.PLAYER_BIO_FIELDS}
+            if not fields.get('display_name'):
+                fields['display_name'] = request.form.get('player_key', '').strip()
+            if manager.save_player_bio(player_key, fields):
+                message = f"Saved bio for {fields.get('display_name') or player_key}."
+            else:
+                error = "Failed to save bio - check the server logs."
+
+    players = collect_known_players() if manager else {}
+    bios = manager.get_all_player_bios() if manager else {}
+
+    player_rows = [
+        {
+            "key": key,
+            "name": info["name"],
+            "country": info["country"],
+            "has_bio": info["has_bio"],
+            "bio": bios.get(key) or {}
+        }
+        for key, info in sorted(players.items(), key=lambda kv: kv[1]["name"].upper())
+    ]
+
+    response = make_response(render_template(
+        'players.html',
+        players=player_rows,
+        message=message,
+        error=error
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 
 # ====================================================================

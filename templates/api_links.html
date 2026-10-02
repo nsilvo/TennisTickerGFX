@@ -87,6 +87,7 @@ h2 { font-size: 1rem; }
             <li><a href="/">🏠 Dashboard</a></li>
             <li><a href="/live_matches">🎬 Live Matches</a></li>
             <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/players">👤 Players</a></li>
             <li><a href="/api_links" class="active">🔗 API Links</a></li>
             <li><a href="/results">📋 Results</a></li>
             <li><a href="/config">⚙ Config</a></li>
@@ -201,6 +202,8 @@ async function build(){
     const orderParam = PINNED.map(encodeURIComponent).join(',');
     document.getElementById('global-rows').innerHTML =
         rowHTML('All scores (JSON)', `${ORIGIN}/api/v1/scores`) +
+        rowHTML('All players (JSON)', `${ORIGIN}/api/v1/players`) +
+        rowHTML('Player bio + record (JSON)', `${ORIGIN}/api/v1/player/SURNAME`) +
         rowHTML('vMix all courts (rows)', `${ORIGIN}/api/v1/vmix`) +
         rowHTML('vMix multi-court board', `${ORIGIN}/api/v1/vmix/wide?courts=${PINNED.length || 4}&order=${orderParam}`);
 
