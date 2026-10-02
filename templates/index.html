@@ -1292,8 +1292,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                         <span class="sr-time">${escHTML(r.time || '—')}${r.date !== today ? `<div class="sr-event">${escHTML(r.date.slice(5))}</div>` : ''}</span>
                         <span><div class="sr-event">${escHTML([r.event, r.round].filter(Boolean).join(' · '))}</div>
                             <div class="sr-names">${escHTML(r.p1_full_name)} <span style="color:var(--muted-text)">v</span> ${escHTML(r.p2_full_name)}</div></span>
-                        <button type="button" class="stage-btn" data-key="${escHTML(r.lta_key)}" data-court="${escHTML(court)}"
-                            title="Put this match on ${escHTML(court)} as its upcoming match">Stage</button>
+                        ${court === 'Unassigned'
+                            ? '<a class="stage-btn" href="/schedule" title="No court yet - choose one on the Schedule page" style="text-decoration:none">Pick court</a>'
+                            : `<button type="button" class="stage-btn" data-key="${escHTML(r.lta_key)}" data-court="${escHTML(court)}"
+                            title="Put this match on ${escHTML(court)} as its upcoming match">Stage</button>`}
                     </div>`).join('')}
                 </div>`;
             }).filter(Boolean);

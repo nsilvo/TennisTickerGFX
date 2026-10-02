@@ -2997,6 +2997,8 @@ def set_lta_staged(keys, staged=True, court=None, time_label=None):
         if key not in entries:
             continue
         if staged:
+            if court is not None and court.strip().lower() in ("", "unassigned"):
+                continue
             current = lta_staged.get(key, {})
             lta_staged[key] = {"court": (court if court is not None else current.get("court", "")).strip(),
                                "time": (time_label if time_label is not None else current.get("time", "")).strip()}

@@ -216,7 +216,7 @@ function itemHTML(r){
     let actions = '';
     if (canStage && openForm === r.lta_key){
         actions = `<form class="stage-form" data-key="${esc(r.lta_key)}">
-            <input type="text" name="court" list="tt-courts" value="${esc(r.stage_court || r.court)}" placeholder="Court" required>
+            <input type="text" name="court" list="tt-courts" value="${esc(r.stage_court || (r.court === 'Unassigned' ? '' : r.court))}" placeholder="Court" required>
             <input type="time" name="time" value="${esc(r.stage_time || r.time)}">
             <button class="btn staged" type="submit">${r.staged ? 'Update' : 'Stage'}</button>
             <button class="btn ghost" type="button" data-cancel>Cancel</button>
@@ -255,7 +255,9 @@ function render(force){
     }
     board.innerHTML = names.map(c => {
         const rows = (courts[c] || []).filter(r => !hideDone || r.status !== 'COMPLETED');
-        const stageable = rows.filter(r => r.lta_key && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status) && r.source === 'lta');
+        // Matches without a court can be staged one by one (choosing a court), not in bulk
+        const stageable = c === 'Unassigned' ? []
+            : rows.filter(r => r.lta_key && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status) && r.source === 'lta');
         const lta = rows.find(r => r.lta_court && r.lta_court !== c);
         return `<div class="court">
             <div class="court-head">
