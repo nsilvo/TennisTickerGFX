@@ -1,0 +1,333 @@
+<!--
+File: templates/schedule.html
+Description: Order of play for every court (LTA schedule merged with TennisTicker),
+             with staging of upcoming matches onto courts before live data arrives.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🗓 Schedule</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+:root {
+    --text-light: #f5f5f7;
+    --muted-text: #a0a0b0;
+    --test-color: #ffc107;
+    --success-color: #3ddc84;
+    --error-color: #ff4b5c;
+    --border-soft: #333344;
+    --staged-color: #c8b3ff;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 32px 16px 48px;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+    color: var(--text-light); line-height: 1.5; min-height: 100vh;
+}
+.container { max-width: 1600px; margin: 0 auto; }
+h1, h2, h3 { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+
+.nav-bar {
+    position: sticky; top: 0; z-index: 1000;
+    background: linear-gradient(180deg, rgba(10,10,17,0.98) 0%, rgba(10,10,17,0.95) 50%, rgba(10,10,17,0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin: -32px -16px 32px -16px; padding: 12px 16px;
+}
+.nav-content { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.nav-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-text); margin: 0; }
+.nav-links { display: flex; gap: 16px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.nav-links a {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    text-decoration: none; color: var(--muted-text); border: 1px solid transparent; transition: all 0.15s ease;
+}
+.nav-links a:hover { color: var(--text-light); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+.nav-links a.active { color: var(--test-color); background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.5); }
+
+.hint { font-size: 0.84rem; color: var(--muted-text); }
+.hint a, .hint code { color: #8ab4ff; }
+.notice { padding: 10px 14px; border-radius: 8px; margin: 10px 0; font-size: 0.9rem; }
+.notice.success { background: rgba(61,220,132,0.14); border: 1px solid rgba(61,220,132,0.5); color: var(--success-color); }
+.notice.error { background: rgba(255,75,92,0.14); border: 1px solid rgba(255,75,92,0.5); color: var(--error-color); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 16px 0; }
+.day-tabs { display: inline-flex; border: 1px solid var(--border-soft); border-radius: 999px; overflow: hidden; flex-wrap: wrap; }
+.day-tab {
+    padding: 6px 14px; cursor: pointer; border: 0; background: rgba(12,12,20,0.86); color: var(--muted-text);
+    font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.day-tab + .day-tab { border-left: 1px solid var(--border-soft); }
+.day-tab.active { color: var(--test-color); background: rgba(255,193,7,0.16); }
+select, input[type=text], input[type=time] {
+    padding: 6px 10px; border-radius: 8px; background: rgba(0,0,0,0.35); color: var(--text-light);
+    border: 1px solid var(--border-soft); font-size: 0.85rem; font-family: inherit;
+}
+label.check { display: inline-flex; gap: 6px; align-items: center; font-size: 0.85rem; color: var(--muted-text); }
+.btn {
+    padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.76rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid rgba(255,193,7,0.7);
+    background: rgba(255,193,7,0.16); color: var(--test-color); font-family: inherit;
+}
+.btn:hover { background: rgba(255,193,7,0.3); }
+.btn.ghost { border-color: var(--border-soft); background: transparent; color: var(--muted-text); }
+.btn.staged { border-color: rgba(200,179,255,0.6); background: rgba(160,120,255,0.14); color: var(--staged-color); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.spacer { flex: 1; }
+
+.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); gap: 16px; align-items: start; }
+.court {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 14px 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.court-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.court-head h2 { font-size: 1rem; color: var(--test-color); margin: 0; }
+.court-head .sub { font-size: 0.74rem; color: var(--muted-text); }
+.court-head a { color: #8ab4ff; font-size: 0.72rem; text-decoration: none; }
+.item { border-top: 1px solid rgba(255,255,255,0.07); padding: 8px 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; }
+.item.done { opacity: 0.55; }
+.item-time { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+.item-event { font-size: 0.72rem; color: var(--muted-text); text-transform: uppercase; letter-spacing: 0.06em; }
+.item-names { font-size: 0.9rem; font-weight: 600; }
+.item-names .vs { color: var(--muted-text); font-weight: 400; margin: 0 4px; }
+.seed { color: var(--muted-text); font-weight: 400; font-size: 0.75rem; }
+.item-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; font-size: 0.78rem; }
+.badge {
+    font-size: 0.64rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-soft); color: var(--muted-text); white-space: nowrap;
+}
+.badge.LIVE { color: var(--success-color); border-color: rgba(61,220,132,0.6); background: rgba(61,220,132,0.12); }
+.badge.UPCOMING { color: var(--test-color); border-color: rgba(255,193,7,0.5); background: rgba(255,193,7,0.1); }
+.badge.staged { color: var(--staged-color); border-color: rgba(200,179,255,0.6); background: rgba(160,120,255,0.12); }
+.badge.tt { color: #8ab4ff; border-color: rgba(138,180,255,0.5); }
+.score { font-variant-numeric: tabular-nums; font-weight: 700; }
+.stage-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; padding: 8px; border-radius: 8px; background: rgba(160,120,255,0.08); }
+.stage-form input[type=text] { width: 140px; }
+.empty { color: var(--muted-text); font-size: 0.85rem; padding: 10px 0; }
+</style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/live_matches">🎬 Live Matches</a></li>
+            <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/schedule" class="active">🗓 Schedule</a></li>
+            <li><a href="/players">👤 Players</a></li>
+            <li><a href="/api_links">🔗 API Links</a></li>
+            <li><a href="/results">📋 Results</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+            <li><a href="/help">❓ Help</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <h1>🗓 Order of Play{% if tournament_name %} · <span style="text-transform:none">{{ tournament_name }}</span>{% endif %}</h1>
+    {% if lta_url %}
+    <p class="hint">From the <a href="{{ lta_url }}" target="_blank" rel="noopener">LTA tournament page</a>, merged with
+       TennisTicker. <strong>Stage</strong> a match to put it on a court as the upcoming match: graphics, vMix and the commentary
+       screen can use its names and event straight away, and it hands over to TennisTicker automatically once the feed carries it.</p>
+    {% else %}
+    <p class="hint">No LTA tournament set yet - add its link under <a href="/config">Config → LTA Order of Play</a>.
+       TennisTicker's own matches are still listed below.</p>
+    {% endif %}
+    <div id="notice"></div>
+
+    <div class="toolbar">
+        <div class="day-tabs" id="day-tabs"></div>
+        <select id="court-filter" aria-label="Court"><option value="">All courts</option></select>
+        <label class="check"><input type="checkbox" id="hide-done"> Hide completed</label>
+        <span class="spacer"></span>
+        <span class="hint" id="updated"></span>
+        {% if lta_url %}<button class="btn ghost" type="button" id="refresh-btn">↻ Refresh from LTA</button>{% endif %}
+    </div>
+
+    <div class="board" id="board"><div class="empty">Loading…</div></div>
+</div>
+
+<datalist id="tt-courts">{% for c in tt_courts %}<option value="{{ c }}">{% endfor %}</datalist>
+<script id="schedule-config" type="application/json">{{ {"days": days, "pinned": pinned_courts} | tojson }}</script>
+<script>
+const CFG = JSON.parse(document.getElementById('schedule-config').textContent);
+const TODAY = new Date().toLocaleDateString('en-CA');   // YYYY-MM-DD in local time
+let day = CFG.days.includes(TODAY) ? TODAY : 'upcoming';
+let courts = {};
+let openForm = null;        // lta_key of the stage form being edited (holds live re-renders)
+let pendingRender = false;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function notice(msg, ok){ document.getElementById('notice').innerHTML = msg ? `<div class="notice ${ok ? 'success' : 'error'}">${esc(msg)}</div>` : ''; }
+function dayLabel(d){
+    if (d === 'upcoming') return 'Upcoming';
+    if (d === 'all') return 'All days';
+    const dt = new Date(d + 'T12:00:00');
+    return (d === TODAY ? 'Today · ' : '') + dt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function renderTabs(){
+    const tabs = [...CFG.days, 'upcoming', 'all'];
+    document.getElementById('day-tabs').innerHTML = tabs.map(d =>
+        `<button type="button" class="day-tab${d === day ? ' active' : ''}" data-day="${d}">${esc(dayLabel(d))}</button>`).join('');
+}
+
+function courtOrder(names){
+    const pinned = CFG.pinned.filter(c => names.includes(c));
+    const rest = names.filter(c => !pinned.includes(c)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return [...pinned, ...rest];
+}
+
+async function load(){
+    try {
+        const j = await (await fetch(`/api/v1/schedule?date=${encodeURIComponent(day)}`)).json();
+        courts = j.courts || {};
+        document.getElementById('updated').textContent = j.lta_fetched_at ? `LTA data ${j.lta_fetched_at}` : '';
+        const sel = document.getElementById('court-filter');
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">All courts</option>' + courtOrder(Object.keys(courts))
+            .map(c => `<option value="${esc(c)}"${c === keep ? ' selected' : ''}>${esc(c)}</option>`).join('');
+        render();
+    } catch(e){ notice('Could not load the schedule.', false); }
+}
+
+function names(r, who){
+    const name = who === 1 ? r.p1_full_name : r.p2_full_name;
+    const seed = who === 1 ? r.p1_seed : r.p2_seed;
+    return `${esc(name)}${seed ? ` <span class="seed">[${esc(seed)}]</span>` : ''}`;
+}
+
+function itemHTML(r){
+    const done = r.status === 'COMPLETED';
+    const canStage = r.lta_key && !['COMPLETED', 'LIVE'].includes(r.status) && r.source !== 'lta+tennisticker';
+    const badges = [`<span class="badge ${esc(r.status)}">${esc(r.status)}</span>`];
+    if (r.staged) badges.push(`<span class="badge staged" title="Staged on ${esc(r.court)}">Staged</span>`);
+    if (r.source.includes('tennisticker')) badges.push(`<span class="badge tt" title="TennisTicker match ${esc(r.matchid)}">TT ${esc(r.matchid)}</span>`);
+    if (r.manual) badges.push('<span class="badge">✍️ Manual</span>');
+    if (r.lta_court && r.lta_court !== r.court) badges.push(`<span class="hint">${esc(r.lta_court)}</span>`);
+
+    let actions = '';
+    if (canStage && openForm === r.lta_key){
+        actions = `<form class="stage-form" data-key="${esc(r.lta_key)}">
+            <input type="text" name="court" list="tt-courts" value="${esc(r.stage_court || r.court)}" placeholder="Court" required>
+            <input type="time" name="time" value="${esc(r.stage_time || r.time)}">
+            <button class="btn staged" type="submit">${r.staged ? 'Update' : 'Stage'}</button>
+            <button class="btn ghost" type="button" data-cancel>Cancel</button>
+        </form>`;
+    } else if (canStage){
+        actions = r.staged
+            ? `<button class="btn ghost" type="button" data-edit="${esc(r.lta_key)}">Edit</button>
+               <button class="btn ghost" type="button" data-unstage="${esc(r.lta_key)}">Unstage</button>`
+            : `<button class="btn staged" type="button" data-edit="${esc(r.lta_key)}">Stage</button>`;
+    }
+
+    return `<div class="item${done ? ' done' : ''}">
+        <div class="item-time">${esc(r.time || '—')}${day === 'all' || day === 'upcoming' ? `<div class="hint">${esc(r.date.slice(5))}</div>` : ''}</div>
+        <div>
+            <div class="item-event">${esc([r.event, r.round].filter(Boolean).join(' · '))}</div>
+            <div class="item-names">${names(r, 1)}<span class="vs">v</span>${names(r, 2)}</div>
+            <div class="item-meta">${badges.join('')}${r.score ? `<span class="score">${esc(r.score)}</span>` : ''}
+                ${r.status === 'LIVE' && r.p1_points ? `<span class="score">(${esc(r.p1_points)}-${esc(r.p2_points)})</span>` : ''}</div>
+            ${actions ? `<div class="item-meta">${actions}</div>` : ''}
+        </div>
+    </div>`;
+}
+
+// Live updates hold while a stage form is open; user actions pass force
+function render(force){
+    if (openForm && !force){ pendingRender = true; return; }
+    pendingRender = false;
+    renderTabs();
+    const only = document.getElementById('court-filter').value;
+    const hideDone = document.getElementById('hide-done').checked;
+    const names = courtOrder(Object.keys(courts)).filter(c => !only || c === only);
+    const board = document.getElementById('board');
+    if (!names.length){
+        board.innerHTML = '<div class="empty">No matches for this day.</div>';
+        return;
+    }
+    board.innerHTML = names.map(c => {
+        const rows = (courts[c] || []).filter(r => !hideDone || r.status !== 'COMPLETED');
+        const stageable = rows.filter(r => r.lta_key && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status) && r.source === 'lta');
+        const lta = rows.find(r => r.lta_court && r.lta_court !== c);
+        return `<div class="court">
+            <div class="court-head">
+                <h2>🎾 ${esc(c)}</h2>
+                ${lta ? `<span class="sub">${esc(lta.lta_court)}</span>` : ''}
+                <a href="/stats?court=${encodeURIComponent(c)}">Commentary ↗</a>
+                <a href="/api/v1/schedule/court/${encodeURIComponent(c)}?date=${encodeURIComponent(day === 'upcoming' ? 'upcoming' : day)}" target="_blank">API ↗</a>
+                ${stageable.length ? `<button class="btn staged" type="button" data-stage-all="${esc(c)}">Stage all ${stageable.length}</button>` : ''}
+            </div>
+            ${rows.map(itemHTML).join('') || '<div class="empty">Nothing to show.</div>'}
+        </div>`;
+    }).join('');
+    const input = board.querySelector('.stage-form input[name=court]');
+    if (input && force) input.focus();
+}
+
+async function stage(body){
+    const resp = await fetch('/api/v1/schedule/stage', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const j = await resp.json();
+    if (!resp.ok){ notice(j.error || 'Staging failed.', false); return false; }
+    notice('', true);
+    return true;
+}
+
+document.getElementById('board').addEventListener('click', async e => {
+    const t = e.target;
+    if (t.dataset.edit){ openForm = t.dataset.edit; render(true); return; }
+    if (t.hasAttribute('data-cancel')){ openForm = null; render(true); return; }
+    if (t.dataset.unstage){ await stage({ key: t.dataset.unstage, staged: false }); load(); return; }
+    if (t.dataset.stageAll){
+        const rows = (courts[t.dataset.stageAll] || []).filter(r => r.lta_key && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status) && r.source === 'lta');
+        if (await stage({ keys: rows.map(r => r.lta_key), staged: true, court: t.dataset.stageAll })){
+            notice(`Staged ${rows.length} match${rows.length === 1 ? '' : 'es'} on ${t.dataset.stageAll}.`, true);
+        }
+        load();
+    }
+});
+
+document.getElementById('board').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.target;
+    const ok = await stage({ key: form.dataset.key, staged: true, court: form.court.value, time: form.time.value || '' });
+    if (ok){ openForm = null; load(); }
+});
+
+document.getElementById('day-tabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-day]');
+    if (!b) return;
+    day = b.dataset.day; openForm = null; load();
+});
+document.getElementById('court-filter').addEventListener('change', () => { openForm = null; render(true); });
+document.getElementById('hide-done').addEventListener('change', () => { openForm = null; render(true); });
+const refreshBtn = document.getElementById('refresh-btn');
+if (refreshBtn) refreshBtn.addEventListener('click', async () => {
+    refreshBtn.disabled = true; refreshBtn.textContent = 'Refreshing…';
+    const j = await (await fetch('/api/v1/schedule/refresh', { method: 'POST' })).json();
+    notice(j.message, j.status === 'success');
+    refreshBtn.disabled = false; refreshBtn.textContent = '↻ Refresh from LTA';
+    load();
+});
+
+// Live: schedule changes immediately, score changes at most every 5s
+const socket = io(window.location.origin);
+socket.on('connect', () => socket.emit('subscribe_all'));
+socket.on('schedule_updated', load);
+let lastLive = 0;
+socket.on('live_updates', () => { if (Date.now() - lastLive > 5000){ lastLive = Date.now(); load(); } });
+
+renderTabs();
+load();
+</script>
+</body>
+</html>

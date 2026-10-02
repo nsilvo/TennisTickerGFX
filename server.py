@@ -353,7 +353,10 @@ class XMLCacheManager:
             if self._latest_cache is None:
                 self._latest_cache = self._load_all_matches()
             cache = self._latest_cache
-        return next((m for m in cache if str(m.get('matchid')) == str(matchid)), None)
+        found = next((m for m in cache if str(m.get('matchid')) == str(matchid)), None)
+        if found is None and str(matchid).startswith(STAGED_PREFIX):
+            found = next((m for m in staged_match_rows(cache) if m['matchid'] == str(matchid)), None)
+        return found
 
     def feed_is_newer(self, matchid):
         """True when the feed changed this match's score after the last manual scoring action."""
@@ -1022,6 +1025,11 @@ class XMLCacheManager:
                 self._latest_cache = self._load_all_matches()
             matches_list = self._latest_cache
 
+        # Matches staged from the LTA order of play sit alongside the feed until TennisTicker has them
+        staged = staged_match_rows(matches_list)
+        if staged:
+            matches_list = matches_list + staged
+
         if self.manual_scores:
             # A commentator's manual score replaces the feed's score for that match everywhere,
             # unless TennisTicker has changed the score since the commentator's last action.
@@ -1219,7 +1227,7 @@ def filter_match_tournaments(matches):
     wanted = set(MATCH_TOURNID_FILTER)
     if not wanted:
         return matches
-    return [m for m in matches if str(m.get('tournid') or '').strip() in wanted]
+    return [m for m in matches if m.get('staged') or str(m.get('tournid') or '').strip() in wanted]
 
 
 def feed_tournaments():
@@ -2700,7 +2708,7 @@ lta_schedule_lock = Lock()
 
 def load_lta_schedule(mgr):
     """Restore the saved schedule and court map (called with the other persisted settings)."""
-    for key, target in (("lta_schedule", lta_schedule), ("lta_court_map", lta_court_map)):
+    for key, target in (("lta_schedule", lta_schedule), ("lta_court_map", lta_court_map), ("lta_staged", lta_staged)):
         raw = mgr.get_setting(key)
         if raw:
             try:
@@ -2713,6 +2721,7 @@ def save_lta_schedule():
     if manager:
         manager.save_setting("lta_schedule", json.dumps(lta_schedule))
         manager.save_setting("lta_court_map", json.dumps(lta_court_map))
+        manager.save_setting("lta_staged", json.dumps(lta_staged))
 
 
 def _split_seed(text):
@@ -2809,6 +2818,8 @@ def refresh_lta_schedule(source=None):
             session = lta_session()
             page = session.get(f"{LTA_BASE}/tournament/{tid}/Matches", timeout=30).text
             days = sorted(set(re.findall(r'MatchesInDay\?date=(\d{8})', page)))
+            title = re.search(r'<title>(.*?)</title>', page, re.S)
+            tournament_name = _lta_text(title.group(1)).split(" - ")[0].split(" | ")[0] if title else ""
             matches = []
             for day in days:
                 matches.extend(lta_matches_in_day(session, tid, day))
@@ -2820,9 +2831,11 @@ def refresh_lta_schedule(source=None):
         links = {m["key"]: m.get("tt_matchid") for m in lta_schedule.get("matches", []) if m.get("tt_matchid")}
         for m in matches:
             m["tt_matchid"] = links.get(m["key"], "")
-        lta_schedule.update(matches=matches, fetched_at=int(time.time()), error="")
+        lta_schedule.update(matches=matches, fetched_at=int(time.time()), error="", days=days,
+                            tournament_name=tournament_name)
         save_lta_schedule()
     link_lta_schedule()
+    notify_schedule_changed()
     return True, f"Loaded {len(matches)} LTA matches across {len(days)} day(s)."
 
 
@@ -2895,7 +2908,7 @@ def link_lta_schedule():
                         lta_court_map["learned"][e["lta_court"]] = tt_court
                         changed = True
                         break
-            if not mid or mid in linked or status != "LIVE":
+            if not mid or mid in linked or status != "LIVE" or fm.get("staged"):
                 continue
             candidates = [
                 e for e in lta_schedule["matches"]
@@ -2913,6 +2926,8 @@ def link_lta_schedule():
             print(f"LTA schedule: linked TennisTicker match {mid} to {entry['event']} on {entry['lta_court'] or 'unknown court'}")
         if changed:
             save_lta_schedule()
+    if changed:
+        notify_schedule_changed()
 
 
 def lta_display_court(lta_court):
@@ -2921,6 +2936,84 @@ def lta_display_court(lta_court):
 
 def _lta_side_name(side):
     return " / ".join(p["name"] for p in side) or "TBC"
+
+
+# --------------------------------------------------------------------
+# Staging: an LTA match pushed onto a court as an upcoming match row
+# --------------------------------------------------------------------
+STAGED_PREFIX = "lta-"
+# {lta_key: {"court": tt_court, "time": "HH:MM"}} - persisted with the schedule
+lta_staged = {}
+
+
+def _lta_feed_side(side):
+    """LTA players as a feed-style side string the rest of the app already parses."""
+    return " / ".join(p["name"] for p in side) or "TBC"
+
+
+def staged_match_rows(feed_rows):
+    """
+    Synthetic upcoming match rows for staged LTA matches. A staged match steps
+    aside once TennisTicker carries it (linked, or same players in the feed today)
+    or LTA records a result.
+    """
+    if not lta_staged:
+        return []
+    entries = {e["key"]: e for e in lta_schedule.get("matches", [])}
+    feed_ids = {str(m.get("matchid")) for m in feed_rows}
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = []
+    for key, stage in list(lta_staged.items()):
+        e = entries.get(key)
+        if not e or e["status"] == "COMPLETED" or (e.get("tt_matchid") and e["tt_matchid"] in feed_ids):
+            continue
+        if e["date"] == today and any(lta_orientation(fm, e) for fm in feed_rows):
+            continue
+        p1, p2 = _lta_feed_side(e["sides"][0]), _lta_feed_side(e["sides"][1])
+        rows.append({
+            "matchid": STAGED_PREFIX + key,
+            "staged": True,
+            "lta_key": key,
+            "court": stage.get("court") or lta_display_court(e["lta_court"]) or e["venue"],
+            "schedtime": stage.get("time") or e["time"],
+            "schedule_date": e["date"],
+            "matchname": " ".join(x for x in (e["event"], e["round"]) if x),
+            "tname": lta_schedule.get("tournament_name") or "",
+            "tournid": "",
+            "player1": p1, "player2": p2, "player1_full": p1, "player2_full": p2,
+            "player1_surname": "", "player2_surname": "", "player1_country": "", "player2_country": "",
+            "matchstatus": "UPCOMING", "is_plan": 1, "winner": "", "winner_name": "",
+            "sets_played_count": 0, "game1": "", "game2": "", "player2serve": 0,
+            "timestamp": int(time.time()),
+        })
+    return rows
+
+
+def set_lta_staged(keys, staged=True, court=None, time_label=None):
+    """Stage or unstage LTA matches, then push the change to every screen."""
+    entries = {e["key"] for e in lta_schedule.get("matches", [])}
+    changed = 0
+    for key in keys:
+        if key not in entries:
+            continue
+        if staged:
+            current = lta_staged.get(key, {})
+            lta_staged[key] = {"court": (court if court is not None else current.get("court", "")).strip(),
+                               "time": (time_label if time_label is not None else current.get("time", "")).strip()}
+        elif key in lta_staged:
+            del lta_staged[key]
+        changed += 1
+    if changed:
+        save_lta_schedule()
+        notify_schedule_changed()
+    return changed
+
+
+def notify_schedule_changed():
+    """Tell open dashboards / schedule pages to re-read the schedule, and graphics the new match list."""
+    socketio.emit('schedule_updated', {"timestamp": datetime.now().strftime('%H:%M:%S')}, to='dashboard')
+    if manager:
+        manager.broadcast_matches([])
 
 
 def schedule_rows():
@@ -2952,7 +3045,7 @@ def schedule_rows():
     linked_ids = {e.get("tt_matchid") for e in entries if e.get("tt_matchid")}
     display_link = {}
     for mid, fm in feed.items():
-        if mid in linked_ids or classify_match_status(fm) == "UPCOMING":
+        if mid in linked_ids or fm.get("staged") or classify_match_status(fm) == "UPCOMING":
             continue
         for e in entries:
             if not e.get("tt_matchid") and e["key"] not in display_link and e["date"] == today \
@@ -2962,6 +3055,7 @@ def schedule_rows():
 
     for e in entries:
         fm = feed.get(e.get("tt_matchid") or display_link.get(e["key"]) or "")
+        staged_fm = feed.get(STAGED_PREFIX + e["key"])   # staged and not yet carried by TennisTicker
         sides = e["sides"]
         if fm and lta_orientation(fm, e) == 2:
             sides = [sides[1], sides[0]]   # follow the feed's side order so names line up with its score
@@ -2985,15 +3079,24 @@ def schedule_rows():
             "matchid": str(fm.get("matchid")) if fm else "",
             "lta_key": e["key"],
             "source": "lta",
+            "staged": e["key"] in lta_staged,
+            "stage_court": lta_staged.get(e["key"], {}).get("court", ""),
+            "stage_time": lta_staged.get(e["key"], {}).get("time", ""),
         }
         if fm:
             used.add(str(fm.get("matchid")))
             row.update(feed_fields(fm), source="lta+tennisticker")
+        elif staged_fm:
+            used.add(staged_fm["matchid"])
+            row.update(feed_fields(staged_fm), source="lta (staged)", matchid=staged_fm["matchid"],
+                       court=staged_fm["court"], time=staged_fm["schedtime"])
+            if row["status"] == "UPCOMING" and e["status"] == "UNSCHEDULED" and not row["time"]:
+                row["status"] = "UNSCHEDULED"
         row["winner_full_name"] = p1 if row["winner"] == "1" else p2 if row["winner"] == "2" else ""
         rows.append(row)
 
     for mid, fm in feed.items():
-        if mid in used:
+        if mid in used or fm.get("staged"):
             continue
         p1 = full_side_name(fm.get("player1_full") or fm.get("player1"), bios)
         p2 = full_side_name(fm.get("player2_full") or fm.get("player2"), bios)
@@ -3002,6 +3105,7 @@ def schedule_rows():
             "time": str(fm.get("schedtime") or ""), "event": str(fm.get("matchname") or ""), "round": "",
             "p1_full_name": p1, "p2_full_name": p2, "p1_seed": "", "p2_seed": "",
             "matchid": mid, "lta_key": "", "source": "tennisticker",
+            "staged": False, "stage_court": "", "stage_time": "",
         }
         row.update(feed_fields(fm))
         row["winner_full_name"] = p1 if row["winner"] == "1" else p2 if row["winner"] == "2" else ""
@@ -3044,6 +3148,53 @@ def api_schedule():
         "court_count": len(courts),
         "courts": {c: courts[c] for c in sorted(courts, key=court_sort_key)},
     })
+
+
+@app.route('/api/v1/schedule/stage', methods=['POST'])
+def api_schedule_stage():
+    """
+    Stage / unstage LTA matches as upcoming matches on a court.
+    JSON {"keys": [...] or "key": "...", "staged": true, "court": "LTA-OC-1", "time": "16:30"}
+    """
+    body = request.get_json(silent=True) or {}
+    keys = body.get("keys") or ([body["key"]] if body.get("key") else [])
+    court = body.get("court")
+    time_label = body.get("time")
+    if time_label and not re.match(r'^\d{1,2}:\d{2}$', str(time_label).strip()):
+        return jsonify({"error": "Time must look like 16:30."}), 400
+    with lta_schedule_lock:
+        changed = set_lta_staged([str(k) for k in keys], staged=bool(body.get("staged", True)),
+                                 court=None if court is None else str(court),
+                                 time_label=None if time_label is None else str(time_label))
+    return jsonify({"status": "success", "changed": changed, "staged_count": len(lta_staged)})
+
+
+@app.route('/api/v1/schedule/refresh', methods=['POST'])
+def api_schedule_refresh():
+    """Re-pull the LTA order of play now."""
+    ok, msg = refresh_lta_schedule()
+    return jsonify({"status": "success" if ok else "error", "message": msg}), (200 if ok else 400)
+
+
+@app.route('/schedule')
+def schedule_page():
+    """Order of play for every court, with staging of upcoming matches onto courts."""
+    stream_config = get_live_stream_config()
+    tt_courts = sorted({str(m.get("court")) for m in (manager.get_latest_data(all_tournaments=True) if manager else [])
+                        if m.get("court") and not m.get("staged")}
+                       | set(lta_court_map["learned"].values()) | set(lta_court_map["manual"].values()),
+                       key=court_sort_key)
+    response = make_response(render_template(
+        'schedule.html',
+        lta_url=lta_schedule.get("url") or "",
+        tournament_name=lta_schedule.get("tournament_name") or "",
+        days=[f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in lta_schedule.get("days") or []]
+        or sorted({m["date"] for m in lta_schedule.get("matches") or []}),
+        tt_courts=tt_courts,
+        pinned_courts=[c for c in stream_config["stream_courts"] if c],
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 
 @app.route('/api/v1/schedule/court/<path:court>', methods=['GET'])

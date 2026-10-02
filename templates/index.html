@@ -617,6 +617,35 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             color: var(--test-color);
         }
 
+        .schedule-link {
+            float: right; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+            color: #8ab4ff; text-decoration: none;
+        }
+        .schedule-link:hover { text-decoration: underline; }
+        .schedule-upcoming { margin-top: 16px; }
+        .schedule-upcoming h3 {
+            font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-text); margin: 0 0 8px;
+        }
+        .schedule-courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+        .schedule-court {
+            border: 1px solid var(--border-soft); border-radius: 12px; padding: 10px 14px; background: rgba(12, 12, 20, 0.6);
+        }
+        .schedule-court-name { font-weight: 700; color: var(--test-color); font-size: 0.85rem; margin-bottom: 4px; }
+        .schedule-row {
+            display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+            padding: 5px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); font-size: 0.84rem;
+        }
+        .schedule-row:first-of-type { border-top: 0; }
+        .schedule-row .sr-time { font-weight: 700; font-variant-numeric: tabular-nums; }
+        .schedule-row .sr-event { font-size: 0.7rem; color: var(--muted-text); text-transform: uppercase; letter-spacing: 0.06em; }
+        .schedule-row .sr-names { overflow-wrap: anywhere; }
+        .stage-btn {
+            padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.7rem; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase; color: #c8b3ff;
+            border: 1px solid rgba(200, 179, 255, 0.6); background: rgba(160, 120, 255, 0.14);
+        }
+        .stage-btn:disabled { opacity: 0.5; cursor: default; }
+
         .planned-label {
             font-size: 0.75rem;
             text-transform: uppercase;
@@ -769,6 +798,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <li><a href="/" class="active">🏠 Dashboard</a></li>
             <li><a href="/live_matches">🎬 Live Matches</a></li>
             <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/schedule">🗓 Schedule</a></li>
             <li><a href="/players">👤 Players</a></li>
             <li><a href="/api_links">🔗 API Links</a></li>
             <li><a href="/caspar/scoreboard/">📺 Scoreboard</a></li>
@@ -831,10 +861,11 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     <hr>
 
-    <h2>📅 Upcoming / Planned Matches</h2>
+    <h2>📅 Upcoming / Planned Matches <a href="/schedule" class="schedule-link">🗓 Full order of play →</a></h2>
     <div id="planned_matches_container">
         <div class="placeholder">No planned matches yet.</div>
     </div>
+    <div id="schedule_upcoming"></div>
 
     <hr>
 
@@ -1153,7 +1184,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                     </div>
                     <div class="planned-info">
                         <div class="planned-time">${schedText}</div>
-                        <div class="planned-label">Upcoming match</div>
+                        <div class="planned-label">${match.staged ? 'Staged from LTA' : 'Upcoming match'}</div>
                     </div>
                 </div>
             `;
@@ -1240,6 +1271,58 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     };
 
     // === SOCKET EVENTS ===
+    // === LTA order of play: next unstaged matches per court, one-click staging ===
+    const scheduleEl = document.getElementById('schedule_upcoming');
+    const SCHEDULE_PER_COURT = 3;
+    const escHTML = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+    async function loadScheduleUpcoming() {
+        try {
+            const j = await (await fetch('/api/v1/schedule?date=upcoming')).json();
+            const courts = j.courts || {};
+            const today = new Date().toLocaleDateString('en-CA');
+            const blocks = Object.keys(courts).map(court => {
+                const rows = courts[court]
+                    .filter(r => r.source === 'lta' && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status))
+                    .slice(0, SCHEDULE_PER_COURT);
+                if (!rows.length) return '';
+                return `<div class="schedule-court">
+                    <div class="schedule-court-name">🎾 ${escHTML(court)}</div>
+                    ${rows.map(r => `<div class="schedule-row">
+                        <span class="sr-time">${escHTML(r.time || '—')}${r.date !== today ? `<div class="sr-event">${escHTML(r.date.slice(5))}</div>` : ''}</span>
+                        <span><div class="sr-event">${escHTML([r.event, r.round].filter(Boolean).join(' · '))}</div>
+                            <div class="sr-names">${escHTML(r.p1_full_name)} <span style="color:var(--muted-text)">v</span> ${escHTML(r.p2_full_name)}</div></span>
+                        <button type="button" class="stage-btn" data-key="${escHTML(r.lta_key)}" data-court="${escHTML(court)}"
+                            title="Put this match on ${escHTML(court)} as its upcoming match">Stage</button>
+                    </div>`).join('')}
+                </div>`;
+            }).filter(Boolean);
+            scheduleEl.innerHTML = blocks.length
+                ? `<div class="schedule-upcoming"><h3>Next on the LTA order of play</h3><div class="schedule-courts">${blocks.join('')}</div></div>`
+                : '';
+        } catch (e) {
+            console.error('Schedule fetch failed', e);
+        }
+    }
+
+    scheduleEl.addEventListener('click', async e => {
+        const btn = e.target.closest('.stage-btn');
+        if (!btn) return;
+        btn.disabled = true;
+        await fetch('/api/v1/schedule/stage', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: btn.dataset.key, staged: true, court: btn.dataset.court })
+        });
+        loadScheduleUpcoming();
+    });
+
+    socket.on('schedule_updated', loadScheduleUpcoming);
+    let lastScheduleLoad = 0;
+    socket.on('live_updates', () => {
+        if (Date.now() - lastScheduleLoad > 15000) { lastScheduleLoad = Date.now(); loadScheduleUpcoming(); }
+    });
+    loadScheduleUpcoming();
+
     socket.on('connect', function () {
         console.log('SocketIO Connected.');
         setSocketStatus(true);
