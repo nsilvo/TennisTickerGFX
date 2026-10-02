@@ -104,6 +104,10 @@ textarea { min-height: 80px; resize: vertical; }
 .bulk-feed-name { font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bulk-feed-name .country { font-size: 0.7rem; color: var(--muted-text); }
 .bulk-row input[type=text] { padding: 6px 10px; font-size: 0.85rem; }
+.import-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.import-row .btn { margin-top: 0; }
+.import-row input[type=text] { flex: 1 1 320px; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; margin: 0; text-transform: none; letter-spacing: 0; font-weight: 500; }
 </style>
 </head>
 <body>
@@ -181,6 +185,24 @@ textarea { min-height: 80px; resize: vertical; }
     </div>
 
     <div class="card bulk-card">
+        <h3>Import / export bios</h3>
+        <p class="hint">Upload a bios CSV (from <a href="/players/export.csv" style="color:#8ab4ff">⬇ Export CSV</a>,
+           or produced by <code>scripts/lta_scrape.py</code>). Rows with LTA names are matched to players in the feed
+           automatically. Only empty fields are filled unless you tick overwrite.</p>
+        <form method="post" action="/players" enctype="multipart/form-data" class="import-row">
+            <input type="hidden" name="form_name" value="import_csv">
+            <input type="file" name="bios_file" accept=".csv,text/csv" required>
+            <label class="inline-check"><input type="checkbox" name="overwrite" value="1"> Overwrite existing text</label>
+            <button class="btn" type="submit">⬆ Import CSV</button>
+        </form>
+        <form class="import-row" id="lta-import-form">
+            <input type="text" name="url" id="lta-import-url" placeholder="Or import live from an LTA tournament link: https://competitions.lta.org.uk/tournament/…/players">
+            <button class="btn" type="submit">🎾 Import from LTA</button>
+        </form>
+        <div class="api-line" id="lta-import-status"></div>
+    </div>
+
+    <div class="card bulk-card">
         <h3>Full names (bulk entry)</h3>
         <p class="hint">Type each competitor's full name and save once - the commentary screens switch to full names
            automatically. Names already saved are pre-filled. Rows left blank are skipped.</p>
@@ -252,6 +274,29 @@ function selectPlayer(key){
 
 searchEl.addEventListener('input', renderList);
 renderList();
+
+// Live LTA import runs in the background on the server; poll its progress
+const ltaStatusEl = document.getElementById('lta-import-status');
+function showLtaStatus(s){
+    ltaStatusEl.textContent = s.error || (s.running && s.total ? `${s.message} (${s.done}/${s.total})` : s.message) || '';
+    ltaStatusEl.style.color = s.error ? 'var(--error-color)' : '';
+}
+async function pollLtaImport(){
+    const s = await (await fetch('/api/v1/lta_import')).json();
+    showLtaStatus(s);
+    if (s.running) setTimeout(pollLtaImport, 1500);
+    else if (s.message && s.message.startsWith('LTA import finished')) {
+        ltaStatusEl.innerHTML = `${esc(s.message)} <a href="/players">Reload to see bios ↻</a>`;
+    }
+}
+document.getElementById('lta-import-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const body = new FormData(e.target);
+    const resp = await fetch('/api/v1/lta_import', { method: 'POST', body });
+    showLtaStatus(await resp.json());
+    if (resp.ok) pollLtaImport();
+});
+pollLtaImport();
 </script>
 </body>
 </html>

@@ -1916,6 +1916,342 @@ def get_match_history_api(match_id):
 
 
 # ====================================================================
+# LTA import: pull profile links + spotter facts for a tournament's entrants
+# ====================================================================
+LTA_BASE = "https://competitions.lta.org.uk"
+LTA_TOURNAMENT_RE = re.compile(r'tournament(?:\.aspx\?id=|/)([0-9A-Fa-f-]{36})')
+LTA_HEADERS = {"User-Agent": "Mozilla/5.0 (TennisTickerGFX player import)"}
+LTA_IMPORT_WORKERS = 4
+
+# Shared progress for the background import (one run at a time)
+lta_import_status = {"running": False, "done": 0, "total": 0, "message": "", "error": ""}
+
+
+def _lta_text(fragment):
+    """Strip tags/entities and collapse whitespace."""
+    from html import unescape
+    return re.sub(r'\s+', ' ', unescape(re.sub(r'<[^>]+>', ' ', fragment or ''))).strip()
+
+
+def lta_session():
+    """requests session that has accepted the LTA cookie wall."""
+    session = requests.Session()
+    session.headers.update(LTA_HEADERS)
+    session.post(f"{LTA_BASE}/cookiewall/Save", data={
+        "ReturnUrl": "/", "SettingsOpen": "false",
+        "CookiePurposes": ["1", "2", "4", "8", "16"]
+    }, allow_redirects=False, timeout=20)
+    return session
+
+
+def lta_tournament_players(session, tournament_id):
+    """[{"player_no", "surname", "first", "country"}] for every entrant."""
+    resp = session.post(
+        f"{LTA_BASE}/tournament/{tournament_id}/Players/GetPlayersContent",
+        headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
+    resp.raise_for_status()
+    players = {}
+    for no, name, country in re.findall(
+            r'player\.aspx\?id=[^&]+&amp;player=(\d+)"[^>]*><span class="nav-link__value">([^<]+)</span></a>'
+            r'\s*</h5>\s*(?:<div[^>]*>\s*<small[^>]*>\s*<span class="nav-link"><span class="nav-link__value">([^<]*)</span>)?',
+            resp.text):
+        surname, _, first = _lta_text(name).partition(',')
+        players.setdefault(no, {"player_no": no, "surname": surname.strip(),
+                                "first": first.strip(), "country": _lta_text(country)})
+    return list(players.values())
+
+
+def lta_player_details(session, tournament_id, player_no):
+    """Scrape the tournament player page + global profile into bio-ready facts."""
+    page = session.get(f"{LTA_BASE}/sport/player.aspx",
+                       params={"id": tournament_id, "player": player_no}, timeout=30).text
+    events = [_lta_text(e) for e in re.findall(
+        r'event\.aspx\?id=[^"]*" class="nav-link text--link-white"><span class="nav-link__value">([^<]+)', page)]
+    guid = re.search(r'/player-profile/([0-9A-Fa-f-]{36})', page)
+    details = {"events": events, "lta_url": "", "member_no": "", "full_name": "",
+               "year_of_birth": "", "county": "", "wtn": {}, "career": "", "this_year": "", "titles": []}
+    if not guid:
+        return details
+
+    details["lta_url"] = f"{LTA_BASE}/player-profile/{guid.group(1).lower()}"
+    prof = session.get(details["lta_url"], timeout=30).text
+
+    head = re.search(r'media__title--large">(.*?)</h2>', prof, re.S)
+    if head:
+        name = re.search(r'nav-link__value">([^<]+)', head.group(1))
+        member = re.search(r'media__title-aside">\((\d+)\)', head.group(1))
+        details["full_name"] = _lta_text(name.group(1)) if name else ""
+        details["member_no"] = member.group(1) if member else ""
+    yob = re.search(r'Year of Birth:\s*(\d{4})', prof)
+    details["year_of_birth"] = yob.group(1) if yob else ""
+    county = re.search(r'title="Play County".*?nav-link__value">([^<]+)', prof, re.S)
+    details["county"] = _lta_text(county.group(1)) if county else ""
+    for kind, value in re.findall(
+            r'tag-duo__title">(Singles|Doubles)</span>\s*<span class="tag-duo__value">(.*?)</span>', prof, re.S):
+        details["wtn"][kind] = _lta_text(value)
+
+    totals = prof.split('id="tabStatsTotal"', 1)
+    if len(totals) == 2:
+        block = totals[1].split('id="tabStats', 1)[0]
+        for label, value in re.findall(
+                r'list__label">(Career|This year)</dt>.*?list__value-start">(.*?)</span>', block, re.S):
+            key = "career" if label == "Career" else "this_year"
+            details[key] = _lta_text(value)
+
+    titles = prof.split('Titles/Finals', 1)
+    if len(titles) == 2:
+        current_year = ""
+        for year, medal, tname, ename in re.findall(
+                r'list__label--loud">(\d{4})</dt>|title="(Winner|Finalist)".*?nav-link__value">([^<]+)</span>'
+                r'.*?text--muted">.*?nav-link__value">([^<]+)</span>', titles[1], re.S):
+            if year:
+                current_year = year
+                continue
+            details["titles"].append({"year": current_year, "result": medal,
+                                      "tournament": _lta_text(tname), "event": _lta_text(ename)})
+    return details
+
+
+def _lta_win_loss(text):
+    """'396 / 175 (571)' -> '396-175 (69%)'."""
+    m = re.match(r'(\d+)\s*/\s*(\d+)', text or '')
+    if not m:
+        return ""
+    won, lost = int(m.group(1)), int(m.group(2))
+    pct = f" ({round(100 * won / (won + lost))}%)" if won + lost else ""
+    return f"{won}-{lost}{pct}"
+
+
+def lta_bio_fields(player, details):
+    """Map scraped LTA facts onto player_bios columns."""
+    career_parts = []
+    if details["wtn"]:
+        career_parts.append("WTN " + " / ".join(f"{k} {v}" for k, v in details["wtn"].items()))
+    if details["career"]:
+        career_parts.append(f"Career W-L {_lta_win_loss(details['career'])}")
+    if details["this_year"]:
+        career_parts.append(f"{datetime.now().year} W-L {_lta_win_loss(details['this_year'])}")
+    wins = [t for t in details["titles"] if t["result"] == "Winner"]
+    finals = [t for t in details["titles"] if t["result"] == "Finalist"]
+    if wins:
+        career_parts.append(f"{len(wins)} recent title(s): " + "; ".join(
+            f"{t['tournament']} {t['event']} ({t['year']})" for t in wins[:3]))
+    if finals:
+        career_parts.append(f"{len(finals)} recent final(s)")
+
+    notes_parts = []
+    if details["events"]:
+        notes_parts.append("This event: " + "; ".join(details["events"]))
+    if details["member_no"]:
+        notes_parts.append(f"LTA no. {details['member_no']}")
+
+    # Profile names keep casing like "McGill" but are sometimes typed as
+    # "aled smith" / "PAUL THOMAS"; the tournament list is consistently cased.
+    full_name = details["full_name"]
+    well_cased = full_name and not full_name.isupper() and all(w[:1].isupper() for w in full_name.split())
+    first_last = f"{player['first']} {player['surname']}".strip()
+    return {
+        "display_name": full_name if well_cased else first_last,
+        "country": player["country"],
+        "born": details["year_of_birth"],
+        "hometown": f"{details['county']} (county)" if details["county"] else "",
+        "career": " · ".join(career_parts),
+        "notes": " · ".join(notes_parts),
+        "lta_url": details["lta_url"],
+    }
+
+
+def lta_candidate_keys(player):
+    """Feed name formats an LTA entrant may appear under, as normalised keys."""
+    surname, first = player["surname"], player["first"]
+    keys = [f"{surname} {first[:1]}", f"{first} {surname}", f"{surname}, {first}", f"{surname} {first}"]
+    return [normalize_player_key(k) for k in keys if first]
+
+
+def match_lta_player_key(player, known_keys):
+    """Existing feed/bio key for this entrant, else the feed's 'SURNAME I' style."""
+    candidates = lta_candidate_keys(player)
+    for key in candidates:
+        if key in known_keys:
+            return key
+    # Truncated first names in the feed, e.g. "ELIZ MALONEY" for Elizabeth Maloney
+    surname, first = player["surname"].upper(), player["first"].upper()
+    for key in known_keys:
+        rest = None
+        if key.endswith(" " + surname):
+            rest = key[:-len(surname) - 1]
+        elif key.startswith(surname + ", "):
+            rest = key[len(surname) + 2:]
+        if rest and len(rest) > 1 and first.startswith(rest):
+            return key
+    return candidates[0] if candidates else ""
+
+
+# Columns of a bios CSV (export, LTA scrape output, and upload). lta_first /
+# lta_surname are optional: when present, rows are matched to the live feed's
+# player names on import instead of trusting player_key.
+BIO_CSV_COLUMNS = ("player_key", "lta_first", "lta_surname",
+                   "display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url")
+
+
+def scrape_lta_tournament(tournament_id, progress=None):
+    """Fetch every entrant of an LTA tournament as bio CSV rows. Returns (rows, failed_names)."""
+    session = lta_session()
+    entrants = lta_tournament_players(session, tournament_id)
+    if progress:
+        progress(0, len(entrants))
+    done = [0]
+
+    def fetch(p):
+        try:
+            return p, lta_player_details(session, tournament_id, p["player_no"])
+        except Exception as e:
+            print(f"LTA scrape: failed for player {p['player_no']}: {e}")
+            return p, None
+        finally:
+            done[0] += 1
+            if progress:
+                progress(done[0], len(entrants))
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(LTA_IMPORT_WORKERS) as pool:
+        results = list(pool.map(fetch, entrants))
+
+    rows, failed = [], []
+    for player, details in results:
+        if details is None:
+            failed.append(f"{player['first']} {player['surname']}")
+            continue
+        rows.append({"player_key": (lta_candidate_keys(player) or [""])[0],
+                     "lta_first": player["first"], "lta_surname": player["surname"],
+                     **lta_bio_fields(player, details)})
+    rows.sort(key=lambda r: (r["lta_surname"].upper(), r["lta_first"].upper()))
+    return rows, failed
+
+
+def merge_bio_rows(rows, overwrite=False):
+    """
+    Save bio rows into player_bios. Rows carrying LTA names are matched to the
+    live feed's player keys; others use player_key as-is. Unless overwrite is
+    set, only empty fields are filled so staff-entered text is never lost.
+    Returns a summary string.
+    """
+    known_keys = set(collect_known_players())
+
+    # A surname + initial shared by two rows can't be matched safely
+    short_counts = {}
+    for row in rows:
+        if row.get("lta_surname"):
+            short = lta_candidate_keys({"first": row.get("lta_first") or "", "surname": row["lta_surname"]})[:1]
+            if short:
+                short_counts[short[0]] = short_counts.get(short[0], 0) + 1
+
+    created = updated = unchanged = 0
+    skipped = []
+    for row in rows:
+        surname = (row.get("lta_surname") or "").strip()
+        if surname:
+            label = f"{row.get('lta_first') or ''} {surname}".strip()
+            key = match_lta_player_key({"first": (row.get("lta_first") or "").strip(), "surname": surname}, known_keys)
+            if short_counts.get(key, 0) > 1:
+                skipped.append(f"{label} (ambiguous name)")
+                continue
+        else:
+            key = normalize_player_key(row.get("player_key") or row.get("display_name"))
+            label = key
+        if not key:
+            skipped.append(f"{label or 'row'} (no name)")
+            continue
+
+        existing = manager.get_player_bio(key) or {}
+        incoming = {c: str(row.get(c) or '').strip() for c in manager.PLAYER_BIO_FIELDS}
+        if overwrite:
+            fields = {c: incoming[c] or existing.get(c) or '' for c in manager.PLAYER_BIO_FIELDS}
+        else:
+            fields = {c: existing.get(c) or incoming[c] for c in manager.PLAYER_BIO_FIELDS}
+        if existing and all((existing.get(c) or '') == fields[c] for c in manager.PLAYER_BIO_FIELDS):
+            unchanged += 1
+            continue
+        if manager.save_player_bio(key, fields):
+            if existing:
+                updated += 1
+            else:
+                created += 1
+        else:
+            skipped.append(f"{label} (save failed)")
+
+    summary = (f"{created} new bio(s), {updated} updated, {unchanged} unchanged, {len(skipped)} skipped.")
+    if skipped:
+        summary += " Skipped: " + ", ".join(skipped)
+    return summary
+
+
+def bio_rows_to_csv(rows):
+    import csv
+    import io
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=BIO_CSV_COLUMNS, extrasaction='ignore')
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def bio_rows_from_csv(text):
+    import csv
+    import io
+    return list(csv.DictReader(io.StringIO(text.lstrip('﻿'))))
+
+
+def run_lta_import(tournament_id):
+    """Background job: scrape an LTA tournament straight into player_bios."""
+    status = lta_import_status
+
+    def progress(done, total):
+        status.update(done=done, total=total, message=f"Fetched {done}/{total} LTA profiles…")
+
+    try:
+        rows, failed = scrape_lta_tournament(tournament_id, progress)
+        status["message"] = "LTA import finished: " + merge_bio_rows(rows)
+        if failed:
+            status["message"] += " Fetch failed: " + ", ".join(failed)
+    except Exception as e:
+        status["error"] = f"LTA import failed: {e}"
+    finally:
+        status["running"] = False
+
+
+@app.route('/api/v1/lta_import', methods=['GET', 'POST'])
+def api_lta_import():
+    """POST {url}: start importing an LTA tournament's players. GET: progress."""
+    if request.method == 'POST':
+        if manager is None:
+            return jsonify({"error": "Cache manager not initialized."}), 503
+        if lta_import_status["running"]:
+            return jsonify({"error": "An LTA import is already running.", **lta_import_status}), 409
+        source = (request.form.get('url') or (request.get_json(silent=True) or {}).get('url') or '').strip()
+        found = LTA_TOURNAMENT_RE.search(source)
+        if not found:
+            return jsonify({"error": "Paste an LTA tournament link, e.g. "
+                                     f"{LTA_BASE}/tournament/<id>/players"}), 400
+        lta_import_status.update(running=True, done=0, total=0, error="",
+                                 message="Opening LTA tournament…")
+        Thread(target=run_lta_import, args=(found.group(1),), daemon=True).start()
+    return jsonify(lta_import_status)
+
+
+@app.route('/players/export.csv', methods=['GET'])
+def players_export_csv():
+    """Download every saved bio as CSV (backup, or to edit and re-upload)."""
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+    rows = [dict(bio, player_key=key) for key, bio in sorted(manager.get_all_player_bios().items())]
+    response = make_response(bio_rows_to_csv(rows))
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=player_bios.csv'
+    return response
+
+
+# ====================================================================
 # Player data endpoints (bios entered via /players + computed records)
 # ====================================================================
 
@@ -2011,6 +2347,19 @@ def players_page():
                     if manager.save_player_bio(key, fields):
                         saved += 1
                 message = f"Saved {saved} full name(s)." if saved else "No name changes to save."
+        elif form_name == 'import_csv':
+            upload = request.files.get('bios_file')
+            if manager is None:
+                error = "Database not ready yet - try again shortly."
+            elif not upload or not upload.filename:
+                error = "Choose a bios CSV file to import."
+            else:
+                try:
+                    rows = bio_rows_from_csv(upload.read().decode('utf-8-sig'))
+                    message = f"Imported {upload.filename}: " + merge_bio_rows(
+                        rows, overwrite=request.form.get('overwrite') == '1')
+                except Exception as e:
+                    error = f"Could not import {upload.filename}: {e}"
         else:
             player_key = normalize_player_key(request.form.get('player_key') or request.form.get('display_name'))
             if not player_key:
