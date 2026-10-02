@@ -675,8 +675,8 @@ function chartsHTML(m){
         return '<div class="chart-block"><div class="chart-note">Score progression and win-predictor graphs will build here as the match develops (one point per score change).</div></div>';
     }
 
-    const side1 = sideEntries(m.player1_full || m.player1).map(p => p.name).join(' / ') || 'Side 1';
-    const side2 = sideEntries(m.player2_full || m.player2).map(p => p.name).join(' / ') || 'Side 2';
+    const side1 = fullSideName(m.player1_full || m.player1) || 'Side 1';
+    const side2 = fullSideName(m.player2_full || m.player2) || 'Side 2';
 
     const tableRows = chartStates.map(s => `
         <tr><td>${new Date(s.ts * 1000).toLocaleTimeString()}</td><td>${esc(stripTB(s.score) || '0-0')}</td>
@@ -793,16 +793,24 @@ function courtCardHTML(court){
 
     let extras = '';
     if (upNext){
+        ensurePlayerData(matchPlayerEntries(upNext));
+        const n1 = fullSideName(upNext.player1_full || upNext.player1) || 'TBC';
+        const n2 = fullSideName(upNext.player2_full || upNext.player2) || 'TBC';
         extras += `<div class="extra-line"><span class="extra-label">Up next</span>
-            <strong>${esc(upNext.player1 || 'TBC')}</strong> vs <strong>${esc(upNext.player2 || 'TBC')}</strong>
+            <strong>${esc(n1)}</strong> vs <strong>${esc(n2)}</strong>
             ${upNext.schedtime ? ` · ${esc(upNext.schedtime)}` : ''}</div>`;
     }
     if (lastDone){
+        ensurePlayerData(matchPlayerEntries(lastDone));
+        const s1 = fullSideName(lastDone.player1_full || lastDone.player1) || lastDone.player1 || '';
+        const s2 = fullSideName(lastDone.player2_full || lastDone.player2) || lastDone.player2 || '';
+        const winnerSide = lastDone.winner_name === lastDone.player1 ? 1
+            : lastDone.winner_name === lastDone.player2 ? 2 : 0;
+        const line = winnerSide
+            ? `<strong>${esc(winnerSide === 1 ? s1 : s2)}</strong> def. ${esc(winnerSide === 1 ? s2 : s1)}`
+            : `<strong>${esc(s1)}</strong> vs ${esc(s2)}`;
         extras += `<div class="extra-line"><span class="extra-label">Last result</span>
-            <strong>${esc(lastDone.winner_name || lastDone.player1 || '')}</strong>
-            ${lastDone.winner_name ? 'def.' : 'vs'}
-            ${esc(lastDone.winner_name === lastDone.player2 ? lastDone.player1 : lastDone.player2) || ''}
-            ${oneLineScore(lastDone) ? ` · ${esc(oneLineScore(lastDone))}` : ''}</div>`;
+            ${line}${oneLineScore(lastDone) ? ` · ${esc(oneLineScore(lastDone))}` : ''}</div>`;
     }
     extras += playerInfoHTML(current);
     extras += ltaLinksHTML(current);

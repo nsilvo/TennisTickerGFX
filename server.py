@@ -1097,6 +1097,12 @@ def compute_player_record(player_key):
     losses = 0
     results = []
 
+    bios = manager.get_all_player_bios() if manager else {}
+
+    def display(p):
+        bio = bios.get(p['key'])
+        return bio['display_name'] if bio and bio.get('display_name') else p['name']
+
     for m in all_known_matches():
         side1 = side_player_entries(m.get('player1_full') or m.get('player1'))
         side2 = side_player_entries(m.get('player2_full') or m.get('player2'))
@@ -1124,8 +1130,8 @@ def compute_player_record(player_key):
             "court": str(m.get('court') or ''),
             "status": status,
             "result": result,
-            "partner": " / ".join(p['name'] for p in own_side if p['key'] != player_key),
-            "opponent": " / ".join(p['name'] for p in opp_side) or "TBC",
+            "partner": " / ".join(display(p) for p in own_side if p['key'] != player_key),
+            "opponent": " / ".join(display(p) for p in opp_side) or "TBC",
             "score": match_score_line(m),
             "schedtime": str(m.get('schedtime') or ''),
             "timestamp": m.get('timestamp') or 0
@@ -1859,19 +1865,42 @@ def players_page():
     error = None
 
     if request.method == 'POST':
-        player_key = normalize_player_key(request.form.get('player_key') or request.form.get('display_name'))
-        if not player_key:
-            error = "Player name is required."
-        elif manager is None:
-            error = "Database not ready yet - try again shortly."
-        else:
-            fields = {col: request.form.get(col, '') for col in manager.PLAYER_BIO_FIELDS}
-            if not fields.get('display_name'):
-                fields['display_name'] = request.form.get('player_key', '').strip()
-            if manager.save_player_bio(player_key, fields):
-                message = f"Saved bio for {fields.get('display_name') or player_key}."
+        form_name = (request.form.get('form_name') or '').strip().lower()
+
+        if form_name == 'bulk_names':
+            # Bulk full-name entry: save display names without touching other bio fields
+            if manager is None:
+                error = "Database not ready yet - try again shortly."
             else:
-                error = "Failed to save bio - check the server logs."
+                saved = 0
+                for key_raw, name in zip(request.form.getlist('bulk_key'),
+                                         request.form.getlist('bulk_name')):
+                    key = normalize_player_key(key_raw)
+                    name = (name or '').strip()
+                    if not key or not name:
+                        continue
+                    existing = manager.get_player_bio(key) or {}
+                    if name == (existing.get('display_name') or ''):
+                        continue
+                    fields = {c: existing.get(c) or '' for c in manager.PLAYER_BIO_FIELDS}
+                    fields['display_name'] = name
+                    if manager.save_player_bio(key, fields):
+                        saved += 1
+                message = f"Saved {saved} full name(s)." if saved else "No name changes to save."
+        else:
+            player_key = normalize_player_key(request.form.get('player_key') or request.form.get('display_name'))
+            if not player_key:
+                error = "Player name is required."
+            elif manager is None:
+                error = "Database not ready yet - try again shortly."
+            else:
+                fields = {col: request.form.get(col, '') for col in manager.PLAYER_BIO_FIELDS}
+                if not fields.get('display_name'):
+                    fields['display_name'] = request.form.get('player_key', '').strip()
+                if manager.save_player_bio(player_key, fields):
+                    message = f"Saved bio for {fields.get('display_name') or player_key}."
+                else:
+                    error = "Failed to save bio - check the server logs."
 
     players = collect_known_players() if manager else {}
     bios = manager.get_all_player_bios() if manager else {}

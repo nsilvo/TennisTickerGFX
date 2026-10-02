@@ -96,6 +96,13 @@ textarea { min-height: 80px; resize: vertical; }
 .api-line { margin-top: 14px; font-size: 0.78rem; color: var(--muted-text); word-break: break-all; }
 .api-line a { color: #8ab4ff; text-decoration: none; }
 .api-line a:hover { text-decoration: underline; }
+
+.bulk-card { margin-top: 20px; }
+.bulk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 24px; margin-top: 10px; }
+.bulk-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; }
+.bulk-feed-name { font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bulk-feed-name .country { font-size: 0.7rem; color: var(--muted-text); }
+.bulk-row input[type=text] { padding: 6px 10px; font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -167,6 +174,25 @@ textarea { min-height: 80px; resize: vertical; }
             </form>
             <div class="api-line" id="api-line"></div>
         </div>
+    </div>
+
+    <div class="card bulk-card">
+        <h3>Full names (bulk entry)</h3>
+        <p class="hint">Type each competitor's full name and save once - the commentary screens switch to full names
+           automatically. Names already saved are pre-filled. Rows left blank are skipped.</p>
+        <form method="post" action="/players">
+            <input type="hidden" name="form_name" value="bulk_names">
+            <div class="bulk-grid">
+                {% for p in players %}
+                <div class="bulk-row">
+                    <span class="bulk-feed-name">{{ p.name }}{% if p.country %} <span class="country">{{ p.country }}</span>{% endif %}</span>
+                    <input type="hidden" name="bulk_key" value="{{ p.key }}">
+                    <input type="text" name="bulk_name" value="{{ p.bio.display_name or '' }}" placeholder="Full name…">
+                </div>
+                {% endfor %}
+            </div>
+            <button class="btn" type="submit">💾 Save All Full Names</button>
+        </form>
     </div>
 </div>
 
