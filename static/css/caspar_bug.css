@@ -1,40 +1,62 @@
+/*
+File: static/css/caspar_bug.css
+Description: Score bug component styling - LTA broadcast reference look:
+             navy logo block + two white rows (stacked uppercase names,
+             plain set numerals, dash, navy point box), wipe-in animation.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+*/
+
 :root {
     --bg-transparent: transparent;
-    --row-bg: #eef1f6;
-    --text-dark: #0b1220;
-    --muted-text: #555a70;
-    --accent-game: #ffc107;
-    --accent-outline: rgba(10, 20, 50, 0.1);
-    --set-bg: #f6f7fa;
-    --set-border: rgba(10, 20, 50, 0.1);
-    --set-win-bg: rgba(61, 220, 132, 0.25);
-    --set-win-border: rgba(61, 220, 132, 0.9);
-    --drop-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-    --navy: #0e1f4d;
+    --row-bg: #f2f2f2;
+    --text-dark: #051b4a;
+    --muted-text: #51586e;
+    --accent-game: #ffd34d;
+    --accent-outline: transparent;
+    --set-bg: transparent;
+    --set-border: transparent;
+    --set-win-bg: transparent;
+    --set-win-border: transparent;
+    --drop-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    --navy: #051b4a;
 }
 
-/* Logo + score table are fused into one seamless rounded block that
-   animates in/out together (visible/hidden toggled by JS on this element). */
+/* Logo + score table fused into one sharp-cornered block.
+   Entrance/exit: a left-to-right wipe (clip-path) with a soft fade. */
 #bug-shell {
     display: flex;
     align-items: stretch;
     gap: 0;
-    border-radius: 10px;
+    border-radius: 0;
     overflow: hidden;
     box-shadow: var(--drop-shadow);
     opacity: 0;
-    transform: translateX(-40px);
-    transition: opacity 0.4s ease, transform 0.4s ease;
+    clip-path: inset(0 100% 0 0);
+    transition: clip-path 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
 }
 
 #bug-shell.visible {
     opacity: 1;
-    transform: translateX(0);
+    clip-path: inset(0 0 0 0);
 }
 
 #bug-shell.hidden {
     opacity: 0;
-    transform: translateX(-40px);
+    clip-path: inset(0 100% 0 0);
+}
+
+/* Staggered content reveal while the shell wipes open */
+#bug-shell.visible .bug-grid > * {
+    animation: bugItemIn 0.4s ease-out backwards;
+}
+#bug-shell.visible .bug-grid > :nth-child(-n+3) { animation-delay: 0.22s; }
+#bug-shell.visible .bug-grid > :nth-child(n+4)  { animation-delay: 0.34s; }
+
+@keyframes bugItemIn {
+    from { opacity: 0; transform: translateX(-12px); }
+    to   { opacity: 1; transform: none; }
 }
 
 #bug-logo-wrap {
@@ -42,14 +64,14 @@
     align-items: center;
     justify-content: center;
     background: var(--navy);
-    padding: 6px 16px;
+    padding: 8px 14px;
     min-height: 1px;
 }
 
 #bug-logo {
     display: block;
-    max-width: 160px;
-    max-height: 70px;
+    max-width: 150px;
+    max-height: 78px;
     object-fit: contain;
 }
 
@@ -65,38 +87,134 @@
     min-width: 0;
 }
 
-/* The score table itself: one shared light background behind both player
-   rows, with a hairline divider between them and gridlines between cells. */
+/* Score table: two 47px rows on one light strip, hairline divider between
+   them, navy point boxes flush at the right. */
 .bug-grid {
     background: var(--row-bg);
+    grid-auto-rows: 47px;
+    gap: 0 10px;
+    padding: 0;
+    align-items: stretch;
+}
+
+.bug-grid > * {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+/* First 3 grid items = team 1's row: hairline divider under the whole row */
+.bug-grid > :nth-child(-n+3) {
+    border-bottom: 1px solid rgba(5, 27, 74, 0.14);
 }
 
 .bug-grid .player-left {
-    padding: 0 10px 0 14px;
+    padding: 0 4px 0 14px;
+    min-width: 150px;
+    gap: 7px;
+}
+
+/* Stacked uppercase team names: "GIMENO P (GBR) /" over "RUNNICLES C" */
+.surname.name-stack {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.15;
+    max-width: 290px;
+}
+
+.name-line {
+    font-size: 14.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text-dark);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.name-stack.single .name-line {
+    font-size: 17px;
+}
+
+/* Sets: plain navy numerals on the strip, chronological left-to-right */
+.sets-row {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    align-items: center;
+    justify-content: flex-end;
+    width: max-content;
+}
+
+.set-cell {
+    width: auto;
+    min-width: 20px;
+    height: auto;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    font-size: 21px;
+    font-weight: 700;
+    color: var(--text-dark);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 2px;
+}
+
+.set-cell.win,
+.set-cell.loss {
+    background: transparent;
+    border: none;
+    opacity: 1;
+}
+
+/* Dash between the sets and the point box, as per the reference graphic */
+.score-dash {
+    color: var(--text-dark);
+    font-weight: 700;
+    font-size: 19px;
+    padding: 0 2px;
 }
 
 .bug-grid .right-cell {
-    padding-right: 10px;
+    padding-right: 5px;
+    gap: 8px;
+    justify-content: flex-end;
 }
 
-/* First 3 grid items = player 1's row (left / sets / game cell) */
-.bug-grid > :nth-child(-n+3) {
-    border-bottom: 1px solid rgba(10, 20, 50, 0.08);
+/* Current game points: solid navy square, white text */
+.game-box {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 0;
+    background: var(--navy);
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: 0.02em;
 }
 
+/* Serve ball: invisible unless that side is serving (reference bug shows
+   no idle marker), pops in next to the serving team's name */
 .serve-ball {
     display: inline-flex;
-    width: 15px;
-    height: 15px;
+    width: 13px;
+    height: 13px;
     line-height: 1;
-    opacity: 0.2;
-    filter: grayscale(1);
-    transition: opacity 0.2s ease, filter 0.2s ease, transform 0.2s ease;
+    opacity: 0;
+    filter: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    transform: scale(0.6);
 }
 
 .serve-ball.active {
     opacity: 1;
-    filter: grayscale(0);
+    transform: scale(1);
 }
 
 .serve-ball-icon {
@@ -114,21 +232,4 @@
     stroke: #ffffff;
     stroke-width: 10;
     stroke-linecap: round;
-}
-
-/* Current game score: solid navy cell, matching the reference bug style */
-.game-box {
-    background: var(--navy);
-    color: #ffffff;
-    border: none;
-    border-radius: 2px;
-}
-
-.set-cell {
-    border-radius: 2px;
-}
-
-
-.sets-row {
-    width: max-content;
 }

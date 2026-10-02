@@ -1,0 +1,285 @@
+<!--
+File: templates/caspar_court.html
+Description: Single CasparCG/vMix overlay page per court - score bug, lower-third
+             (names + flags) and winner graphic, controlled via /api/v1/graphics/.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Caspar Court Graphics {{ court }}</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css"/>
+
+<style>
+:root {
+    --navy: {{ bug_style.accent_color }};
+    --strip: {{ bug_style.row_bg_rgba }};
+    --ink: {{ bug_style.text_color }};
+    --on-navy: {{ bug_style.game_text_color }};
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: transparent;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body.debug-mode { background: #000; }
+
+#canvas { position: absolute; width: 1920px; height: 1080px; top: 0; left: 0; background: transparent; pointer-events: none; }
+
+/* The score bug renders inside its own page (positioning/colours from the bug editor) */
+#bug-frame { position: absolute; inset: 0; width: 1920px; height: 1080px; border: 0; background: transparent; }
+
+/* ---------- Lower third: names + flags, bottom centre ---------- */
+#lower-third {
+    position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: stretch;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+    opacity: 0; clip-path: inset(0 50% 0 50%);
+    transition: clip-path 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+}
+#lower-third.visible { opacity: 1; clip-path: inset(0 0 0 0); }
+
+.lt-tab {
+    background: var(--navy); color: var(--on-navy);
+    display: flex; align-items: center; padding: 0 26px;
+    font-size: 24px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+    white-space: nowrap;
+}
+.lt-body { background: var(--strip); display: flex; align-items: center; gap: 26px; padding: 14px 34px; }
+.lt-side { display: flex; align-items: center; gap: 14px; }
+.lt-flags { display: flex; gap: 6px; font-size: 30px; line-height: 1; }
+.lt-name { font-size: 30px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap; }
+.lt-vs { font-size: 22px; font-weight: 800; color: var(--navy); opacity: 0.55; letter-spacing: 0.08em; }
+.lt-sub {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: var(--navy); color: var(--on-navy);
+    font-size: 17px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    text-align: center; padding: 6px 12px; white-space: nowrap;
+}
+
+/* ---------- Winner graphic: bottom centre banner ---------- */
+#winner-gfx {
+    position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+    opacity: 0; clip-path: inset(0 50% 0 50%);
+    transition: clip-path 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+}
+#winner-gfx.visible { opacity: 1; clip-path: inset(0 0 0 0); }
+
+.win-tab {
+    background: var(--navy); color: var(--on-navy); align-self: stretch;
+    font-size: 24px; font-weight: 800; letter-spacing: 0.22em; text-transform: uppercase;
+    text-align: center; padding: 8px 30px;
+}
+.win-body { background: var(--strip); display: flex; align-items: center; gap: 16px; padding: 16px 40px; }
+.win-name { font-size: 34px; font-weight: 800; color: var(--ink); text-transform: uppercase; white-space: nowrap; }
+.win-flags { display: flex; gap: 6px; font-size: 32px; line-height: 1; }
+.win-score { background: var(--navy); color: var(--on-navy); align-self: stretch;
+    font-size: 19px; font-weight: 700; letter-spacing: 0.1em; text-align: center; padding: 7px 12px; }
+
+#debug-note { position: absolute; top: 12px; left: 12px; color: #0f0; font: 13px monospace; display: none; }
+body.debug-mode #debug-note { display: block; }
+</style>
+</head>
+<body class="{% if debug_mode %}debug-mode{% endif %}">
+<div id="canvas">
+    <iframe id="bug-frame" src="/caspar/bug/?court={{ court | urlencode }}{% if debug_mode %}&debug=1{% endif %}"></iframe>
+
+    <div id="lower-third">
+        <div class="lt-tab" id="lt-tab">MATCH</div>
+        <div class="lt-body">
+            <div class="lt-side">
+                <span class="lt-flags" id="lt-flags-1"></span>
+                <span class="lt-name" id="lt-name-1">—</span>
+            </div>
+            <span class="lt-vs">VS</span>
+            <div class="lt-side">
+                <span class="lt-name" id="lt-name-2">—</span>
+                <span class="lt-flags" id="lt-flags-2"></span>
+            </div>
+        </div>
+        <div class="lt-sub" id="lt-sub"></div>
+    </div>
+
+    <div id="winner-gfx">
+        <div class="win-tab">Winner</div>
+        <div class="win-body">
+            <span class="win-flags" id="win-flags"></span>
+            <span class="win-name" id="win-name">—</span>
+        </div>
+        <div class="win-score" id="win-score"></div>
+    </div>
+
+    <div id="debug-note">court graphics: <span id="dbg-court"></span> | <span id="dbg-state"></span></div>
+</div>
+
+<script id="court-config" type="application/json">{{ {
+    "court": court,
+    "state": graphics_state,
+    "match": match_data or None
+} | tojson }}</script>
+<script>
+const CFG = JSON.parse(document.getElementById('court-config').textContent);
+const COURT = String(CFG.court || '').trim();
+let gfxState = CFG.state || { bug: true, lower_third: false, winner: false };
+let match = CFG.match || null;
+let lastWinner = match ? Boolean((match.winner_name || '').trim()) : null;
+
+document.getElementById('dbg-court').textContent = COURT || '(none)';
+
+const iso3ToIso2 = {
+    'GBR':'gb','ESP':'es','SRB':'rs','FRA':'fr','GER':'de','USA':'us','CAN':'ca','AUS':'au',
+    'NED':'nl','SUI':'ch','ITA':'it','CRO':'hr','POL':'pl','SWE':'se','NOR':'no','ARG':'ar',
+    'BRA':'br','ROU':'ro','DEN':'dk','POR':'pt','BEL':'be','FIN':'fi','CHN':'cn','JPN':'jp',
+    'HUN':'hu','IRL':'ie','SCO':'gb-sct','WAL':'gb-wls','RSA':'za','CZE':'cz','AUT':'at','IND':'in'
+};
+function toISO2(c){ c = String(c || '').toUpperCase(); return iso3ToIso2[c] || c.slice(0,2).toLowerCase(); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+// Split a side string into individual players with countries
+function sideEntries(raw){
+    return String(raw || '').split('/').map(part => {
+        const cm = part.match(/\(([A-Za-z]{2,3})\)/);
+        const name = part.replace(/\([A-Za-z]{2,3}\)/g, '').replace(/\s+/g, ' ').trim();
+        return name ? { name, key: name.toUpperCase(), country: cm ? cm[1].toUpperCase() : '' } : null;
+    }).filter(Boolean);
+}
+
+// Full names from the player bio API (falls back to feed names)
+const playerCache = new Map();
+function ensurePlayers(entries){
+    entries.forEach(p => {
+        if (playerCache.has(p.key)) return;
+        playerCache.set(p.key, null);
+        fetch(`/api/v1/player/${encodeURIComponent(p.key)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(j => { if (j){ playerCache.set(p.key, j); renderData(); } })
+            .catch(() => {});
+    });
+}
+function fullName(p){
+    const d = playerCache.get(p.key);
+    return (d && d.name) ? d.name : p.name;
+}
+function sideName(entries){ return entries.map(fullName).join(' / '); }
+function flagsHTML(entries){
+    return entries.filter(p => p.country)
+        .map(p => `<span class="flag-icon flag-icon-${esc(toISO2(p.country))}"></span>`).join('');
+}
+function scoreLine(m){
+    const played = Number(m.sets_played_count) || 0;
+    const parts = [];
+    for (let i = 1; i <= played; i++){
+        const a = parseInt(m[`set${i}_p1`], 10) || 0;
+        const b = parseInt(m[`set${i}_p2`], 10) || 0;
+        if (a === 0 && b === 0) continue;
+        parts.push(`${a}-${b}`);
+    }
+    return parts.join('  ');
+}
+
+function renderData(){
+    if (!match) return;
+    const s1 = sideEntries(match.player1_full || match.player1);
+    const s2 = sideEntries(match.player2_full || match.player2);
+    ensurePlayers([...s1, ...s2]);
+
+    // Lower third
+    document.getElementById('lt-tab').textContent = (match.matchname || 'MATCH').toUpperCase();
+    document.getElementById('lt-name-1').textContent = sideName(s1).toUpperCase() || '—';
+    document.getElementById('lt-name-2').textContent = sideName(s2).toUpperCase() || '—';
+    document.getElementById('lt-flags-1').innerHTML = flagsHTML(s1);
+    document.getElementById('lt-flags-2').innerHTML = flagsHTML(s2);
+    document.getElementById('lt-sub').textContent = [match.tname, match.court].filter(Boolean).join('  ·  ').toUpperCase();
+
+    // Winner graphic
+    const winCode = String(match.winner || '').trim();
+    const winSide = winCode === '1' ? s1 : winCode === '2' ? s2 : null;
+    if (winSide){
+        document.getElementById('win-name').textContent = sideName(winSide).toUpperCase();
+        document.getElementById('win-flags').innerHTML = flagsHTML(winSide);
+        document.getElementById('win-score').textContent = scoreLine(match) || (match.matchname || '');
+    }
+}
+
+// ---------- Visibility control ----------
+function applyState(){
+    const frame = document.getElementById('bug-frame');
+    try { frame.contentWindow.postMessage(gfxState.bug ? 'show' : 'hide', '*'); } catch(e){}
+    document.getElementById('lower-third').classList.toggle('visible', !!gfxState.lower_third);
+    document.getElementById('winner-gfx').classList.toggle('visible', !!gfxState.winner);
+    document.getElementById('dbg-state').textContent = JSON.stringify(gfxState);
+}
+
+function sendCommand(graphic, action){
+    // Route through the API so state stays canonical and every open copy follows
+    fetch(`/api/v1/graphics/${encodeURIComponent(COURT)}/${graphic}/${action}`, { method: 'POST' }).catch(() => {});
+}
+
+// Auto behaviour: when the current match gains a winner → hide bug, show winner.
+// When a new (live) match replaces it → bug back, winner away.
+function handleMatch(m){
+    const prevId = match ? String(match.matchid) : null;
+    match = m;
+    renderData();
+
+    const hasWinner = Boolean((m.winner_name || '').trim());
+    if (lastWinner === null){ lastWinner = hasWinner; applyState(); return; }
+
+    if (hasWinner && !lastWinner){
+        sendCommand('bug', 'hide');
+        sendCommand('winner', 'show');
+    } else if (!hasWinner && lastWinner){
+        // New match underway on this court
+        sendCommand('winner', 'hide');
+        sendCommand('lower_third', 'hide');
+        sendCommand('bug', 'show');
+    } else if (prevId && String(m.matchid) !== prevId && !hasWinner){
+        sendCommand('winner', 'hide');
+        sendCommand('bug', 'show');
+    }
+    lastWinner = hasWinner;
+}
+
+// ---------- Socket.IO (push-based) ----------
+const socket = io(window.location.origin);
+socket.on('connect', () => {
+    if (COURT) socket.emit('subscribe', { court: COURT });
+});
+socket.on('match_update', data => {
+    if (!data || !data.match) return;
+    const m = data.match;
+    // Court rooms can carry corrections for old matches; only follow live ones
+    if (match && String(m.matchid) !== String(match.matchid)){
+        const st = String(m.matchstatus || '').toUpperCase();
+        const isLive = ['IN PROGRESS','WARMUP','TEST'].some(k => st.includes(k));
+        if (!isLive) return;
+    }
+    handleMatch(m);
+});
+socket.on('graphic_command', data => {
+    if (!data || String(data.court) !== COURT) return;
+    gfxState = data.state || gfxState;
+    applyState();
+});
+
+// Initial paint
+renderData();
+// Give the bug iframe a moment to boot before pushing initial visibility
+setTimeout(applyState, 800);
+
+// If the current match already has a winner on load, reflect the auto rule
+if (match && (match.winner_name || '').trim() && gfxState.bug && !gfxState.winner){
+    setTimeout(() => { sendCommand('bug', 'hide'); sendCommand('winner', 'show'); }, 1000);
+}
+</script>
+</body>
+</html>

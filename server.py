@@ -1413,13 +1413,13 @@ BUG_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
 DEFAULT_BUG_STYLE = {
-    "corner": "top-left",
-    "offset_x": 60,
-    "offset_y": 60,
-    "row_bg": "#eef1f6",        # score row background
-    "row_opacity": 90,          # percent
-    "text_color": "#0b1220",    # player names / set scores
-    "accent_color": "#0e1f4d",  # logo panel + current-game box background
+    "corner": "bottom-left",
+    "offset_x": 28,
+    "offset_y": 32,
+    "row_bg": "#f2f2f2",        # score row background (sampled from broadcast reference)
+    "row_opacity": 100,         # percent
+    "text_color": "#051b4a",    # player names / set scores (LTA navy)
+    "accent_color": "#051b4a",  # logo panel + current-game box background
     "game_text_color": "#ffffff",
     "set_win_color": "#3ddc84",
     "show_game_box": True,      # untick for matches without live point scoring
@@ -1509,7 +1509,8 @@ def save_bug_style_from_form(form):
 
 
 def get_bug_logo_url():
-    """Return the uploaded bug logo URL if one has been configured."""    if not manager:
+    """Return the uploaded bug logo URL if one has been configured."""
+    if not manager:
         return None
 
     logo_filename = (manager.get_setting(BUG_LOGO_SETTING_KEY) or "").strip()

@@ -181,6 +181,10 @@ async function build(){
         rows += rowHTML('Court scores (JSON)', `${ORIGIN}/api/v1/scores/court/${enc}`);
         rows += rowHTML('vMix data source', `${ORIGIN}/api/v1/vmix?court=${enc}`);
         rows += rowHTML('Commentary screen', `${ORIGIN}/stats?court=${enc}`);
+        rows += rowHTML('All graphics (overlay page)', `${ORIGIN}/caspar/court/?court=${enc}`);
+        rows += rowHTML('Lower third show / hide', `${ORIGIN}/api/v1/graphics/${enc}/lower_third/show`);
+        rows += rowHTML('Winner show / hide', `${ORIGIN}/api/v1/graphics/${enc}/winner/show`);
+        rows += rowHTML('Bug show / hide', `${ORIGIN}/api/v1/graphics/${enc}/bug/show`);
         if (m) {
             rows += rowHTML('Current match (JSON)', `${ORIGIN}/api/v1/match/${encodeURIComponent(m.matchid)}`);
             rows += rowHTML('Scoreboard overlay', `${ORIGIN}/caspar/scoreboard/?matchid=${encodeURIComponent(m.matchid)}`);

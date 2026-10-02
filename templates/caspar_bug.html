@@ -374,7 +374,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     const bugEl = document.getElementById('bug');
     const bugShellEl = document.getElementById('bug-shell');
     let hideTimeoutId = null;
-    const HIDE_TRANSITION_MS = 420; // keep in sync with #bug-shell transition duration
+    const HIDE_TRANSITION_MS = 520; // keep in sync with #bug-shell clip-path transition duration
 
     // --- ISO 3 -> flag-icon code ---
     const iso3ToIso2 = {
@@ -396,7 +396,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
     // Shrink (never truncate) a surname horizontally so it always fits within
     // SURNAME_MAX_WIDTH, instead of clipping it with an ellipsis.
-    const SURNAME_MAX_WIDTH = 323;
+    const SURNAME_MAX_WIDTH = 290;
     function fitSurnameText(el) {
         if (!el) return;
         el.style.transform = 'none';
@@ -415,10 +415,20 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 const prefix = isP1 ? 'p1' : 'p2';
                 const surnameKey = prefix === 'p1' ? 'player1_surname' : 'player2_surname';
                 const fullNameKey = prefix === 'p1' ? 'player1' : 'player2';
-                const countryKey = prefix === 'p1' ? 'player1_country' : 'player2_country';
 
-                const surname = (match[surnameKey] || '').trim() || (match[fullNameKey] || '').trim();
-                const countryISO2 = toISO2(match[countryKey] || '');
+                // Reference look: raw feed name, uppercase, doubles stacked on
+                // two lines ("GIMENO P (GBR) /" over "RUNNICLES C"), no flag icon.
+                const rawName = (match[fullNameKey] || '').trim() || (match[surnameKey] || '').trim();
+                const parts = rawName.split('/').map(s => s.trim()).filter(Boolean);
+                let nameHTML, stackCls;
+                if (parts.length > 1) {
+                        stackCls = 'surname name-stack';
+                        nameHTML = `<span class="name-line">${parts[0].toUpperCase()} /</span>`
+                                 + `<span class="name-line">${parts.slice(1).join(' / ').toUpperCase()}</span>`;
+                } else {
+                        stackCls = 'surname name-stack single';
+                        nameHTML = `<span class="name-line">${rawName.toUpperCase()}</span>`;
+                }
                 return `
                     <div class="player-left" data-row="${prefix}">
                         <span class="serve-ball ${isServing ? 'active' : ''}" data-key="serve_${prefix}">
@@ -431,8 +441,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                                 </g>
                             </svg>
                         </span>
-                        <span class="flag-icon flag-icon-${countryISO2}"></span>
-                        <span class="surname" data-key="surname_${prefix}">${surname}</span>
+                        <span class="${stackCls}" data-key="surname_${prefix}">${nameHTML}</span>
                     </div>`;
         }
 
@@ -478,13 +487,14 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 return `<div class="sets-row">${cells}</div>`;
         }
 
-        // Build a single player's game score cell (serve indicator now lives next to the name)
+        // Build a single player's game score cell (dash + navy point box, as per reference)
         function buildPlayerGameScoreHTML(match, isP1) {
                 const prefix = isP1 ? 'p1' : 'p2';
                 const gameKey = isP1 ? 'game1' : 'game2';
-                const gameScore = (match[gameKey] || '').toString();
+                const gameScore = (match[gameKey] || '').toString().trim() || '00';
                 return `
                     <div class="right-cell">
+                        <span class="score-dash">-</span>
                         <div class="game-box" data-key="game_${prefix}">${gameScore}</div>
                     </div>`;
         }

@@ -1,0 +1,197 @@
+<!--
+File: templates/bug_editor.html
+Description: Score bug appearance editor - colours, position, point-box visibility, live preview.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎨 Bug Editor</title>
+<style>
+:root {
+    --text-light: #f5f5f7;
+    --muted-text: #a0a0b0;
+    --test-color: #ffc107;
+    --success-color: #3ddc84;
+    --error-color: #ff4b5c;
+    --border-soft: #333344;
+}
+* { box-sizing: border-box; }
+body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 32px 16px 48px;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%);
+    color: var(--text-light); line-height: 1.5; min-height: 100vh;
+}
+.container { max-width: 1280px; margin: 0 auto; }
+h1, h3 { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+h1 { font-size: 1.5rem; }
+
+.nav-bar {
+    position: sticky; top: 0; z-index: 1000;
+    background: linear-gradient(180deg, rgba(10,10,17,0.98) 0%, rgba(10,10,17,0.95) 50%, rgba(10,10,17,0) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin: -32px -16px 32px -16px; padding: 12px 16px;
+}
+.nav-content { max-width: 1280px; margin: 0 auto; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.nav-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-text); margin: 0; }
+.nav-links { display: flex; gap: 16px; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.nav-links a {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em;
+    text-decoration: none; color: var(--muted-text); border: 1px solid transparent;
+}
+.nav-links a:hover { color: var(--text-light); background: rgba(255,255,255,0.08); }
+.nav-links a.active { color: var(--test-color); background: rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.5); }
+
+.layout { display: grid; grid-template-columns: 360px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 1000px){ .layout { grid-template-columns: 1fr; } }
+
+.card {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.hint { font-size: 0.84rem; color: var(--muted-text); }
+.notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; }
+.notice.success { background: rgba(61,220,132,0.14); border: 1px solid rgba(61,220,132,0.5); color: var(--success-color); }
+.notice.error { background: rgba(255,75,92,0.14); border: 1px solid rgba(255,75,92,0.5); color: var(--error-color); }
+
+label { display: block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text); margin: 12px 0 4px; }
+input[type=number], select {
+    width: 100%; padding: 8px 10px; border-radius: 8px;
+    background: rgba(0,0,0,0.35); border: 1px solid var(--border-soft); color: var(--text-light); font-size: 0.9rem;
+}
+input[type=color] { width: 100%; height: 38px; padding: 2px; border-radius: 8px; border: 1px solid var(--border-soft); background: rgba(0,0,0,0.35); cursor: pointer; }
+input[type=range] { width: 100%; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.check-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; font-size: 0.9rem; }
+.check-row input { width: 18px; height: 18px; accent-color: var(--test-color); }
+.btn {
+    margin-top: 18px; padding: 10px 20px; border-radius: 8px; cursor: pointer;
+    font-size: 0.82rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    border: 1px solid rgba(255,193,7,0.7); background: rgba(255,193,7,0.16); color: var(--test-color);
+}
+.btn:hover { background: rgba(255,193,7,0.3); }
+.btn.secondary { border-color: var(--border-soft); background: rgba(255,255,255,0.06); color: var(--muted-text); margin-left: 8px; }
+
+/* 1920x1080 preview scaled to fit */
+.preview-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; border: 1px solid var(--border-soft); background: #222; }
+.preview-wrap iframe {
+    width: 1920px; height: 1080px; border: 0;
+    transform-origin: top left; position: absolute; top: 0; left: 0;
+}
+.preview-note { margin-top: 8px; }
+</style>
+</head>
+<body>
+<nav class="nav-bar">
+    <div class="nav-content">
+        <h3 class="nav-title">📊 Dashboard</h3>
+        <ul class="nav-links">
+            <li><a href="/">🏠 Dashboard</a></li>
+            <li><a href="/stats">📈 Commentary</a></li>
+            <li><a href="/caspar/bug/editor" class="active">🎨 Bug Editor</a></li>
+            <li><a href="/api_links">🔗 API Links</a></li>
+            <li><a href="/config">⚙ Config</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    <h1>🎨 Score Bug Editor</h1>
+    <p class="hint">Changes save to the server and apply when an overlay (re)loads. Open with
+       <code>?court=…</code> or <code>?matchid=…</code> to preview a specific match.</p>
+
+    {% if message %}<div class="notice success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+    <div class="layout">
+        <div class="card">
+            <h3>Appearance</h3>
+            <form method="post">
+                <label for="corner">Screen corner</label>
+                <select name="corner" id="corner">
+                    {% for c in ['top-left','top-right','bottom-left','bottom-right'] %}
+                    <option value="{{ c }}" {% if style.corner == c %}selected{% endif %}>{{ c.replace('-', ' ') }}</option>
+                    {% endfor %}
+                </select>
+
+                <div class="grid2">
+                    <div>
+                        <label for="offset_x">Horizontal inset (px)</label>
+                        <input type="number" name="offset_x" id="offset_x" min="0" max="1800" value="{{ style.offset_x }}">
+                    </div>
+                    <div>
+                        <label for="offset_y">Vertical inset (px)</label>
+                        <input type="number" name="offset_y" id="offset_y" min="0" max="1000" value="{{ style.offset_y }}">
+                    </div>
+                </div>
+
+                <div class="grid2">
+                    <div>
+                        <label for="row_bg">Row background</label>
+                        <input type="color" name="row_bg" id="row_bg" value="{{ style.row_bg }}">
+                    </div>
+                    <div>
+                        <label for="text_color">Name / set text</label>
+                        <input type="color" name="text_color" id="text_color" value="{{ style.text_color }}">
+                    </div>
+                    <div>
+                        <label for="accent_color">Logo panel &amp; point box</label>
+                        <input type="color" name="accent_color" id="accent_color" value="{{ style.accent_color }}">
+                    </div>
+                    <div>
+                        <label for="game_text_color">Point box text</label>
+                        <input type="color" name="game_text_color" id="game_text_color" value="{{ style.game_text_color }}">
+                    </div>
+                    <div>
+                        <label for="set_win_color">Set-win highlight</label>
+                        <input type="color" name="set_win_color" id="set_win_color" value="{{ style.set_win_color }}">
+                    </div>
+                    <div>
+                        <label for="row_opacity">Row opacity: <span id="op-val">{{ style.row_opacity }}</span>%</label>
+                        <input type="range" name="row_opacity" id="row_opacity" min="0" max="100" value="{{ style.row_opacity }}"
+                               oninput="document.getElementById('op-val').textContent = this.value">
+                    </div>
+                </div>
+
+                <div class="check-row">
+                    <input type="checkbox" name="show_game_box" id="show_game_box" {% if style.show_game_box %}checked{% endif %}>
+                    <label for="show_game_box" style="margin:0; text-transform:none; font-size:0.9rem; color:var(--text-light);">
+                        Show current-game point box <span class="hint">(untick for matches without live point scoring)</span>
+                    </label>
+                </div>
+
+                <button class="btn" type="submit">💾 Save &amp; Refresh Preview</button>
+                <button class="btn secondary" type="submit" name="form_name" value="reset"
+                        onclick="return confirm('Reset the bug style to defaults?')">↺ Reset</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>Preview</h3>
+            <div class="preview-wrap" id="preview-wrap">
+                <iframe id="preview-frame" src="/caspar/bug/?debug=1{% if preview_qs %}&{{ preview_qs }}{% endif %}&_={{ range(1, 999999) | random }}"></iframe>
+            </div>
+            <p class="hint preview-note">Preview uses <code>debug=1</code> (black background) so the bug is visible here;
+               real overlays stay transparent for CasparCG / vMix.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+// Scale the 1920x1080 preview iframe to fit its container
+function scalePreview(){
+    const wrap = document.getElementById('preview-wrap');
+    const frame = document.getElementById('preview-frame');
+    frame.style.transform = `scale(${wrap.clientWidth / 1920})`;
+}
+window.addEventListener('resize', scalePreview);
+scalePreview();
+</script>
+</body>
+</html>
