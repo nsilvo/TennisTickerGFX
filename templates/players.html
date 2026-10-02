@@ -79,6 +79,7 @@ h1 { font-size: 1.5rem; }
 .bio-dot.has { background: var(--success-color); }
 
 label { display: block; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text); margin: 12px 0 4px; }
+.label-hint { font-weight: 400; text-transform: none; letter-spacing: 0; }
 input[type=text], textarea {
     width: 100%; padding: 9px 12px; border-radius: 8px;
     background: rgba(0,0,0,0.35); border: 1px solid var(--border-soft); color: var(--text-light);
@@ -170,6 +171,9 @@ textarea { min-height: 80px; resize: vertical; }
                 </div>
                 <label for="f-notes">Commentator notes</label>
                 <textarea name="notes" id="f-notes" placeholder="Anything a commentator should know - story lines, playing style, injuries, head-to-heads…"></textarea>
+                <label for="f-lta_url">LTA profile URL <span class="label-hint">(paste the exact profile so links skip the name search)</span></label>
+                <input type="text" name="lta_url" id="f-lta_url" placeholder="https://competitions.lta.org.uk/player-profile/…">
+                <div class="api-line" id="lta-search-line"></div>
                 <button class="btn" type="submit">💾 Save Player</button>
             </form>
             <div class="api-line" id="api-line"></div>
@@ -235,6 +239,11 @@ function selectPlayer(key){
     document.getElementById('f-hometown').value = bio.hometown || '';
     document.getElementById('f-career').value = bio.career || '';
     document.getElementById('f-notes').value = bio.notes || '';
+    document.getElementById('f-lta_url').value = bio.lta_url || '';
+    const searchName = (bio.display_name || p.name || '').trim();
+    document.getElementById('lta-search-line').innerHTML = searchName
+        ? `Find the profile: <a href="https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(searchName)}" target="_blank" rel="noopener">search "${esc(searchName)}" on LTA ↗</a>, then paste its URL above.`
+        : '';
     const apiUrl = `/api/v1/player/${encodeURIComponent(p.key)}`;
     document.getElementById('api-line').innerHTML =
         `API: <a href="${apiUrl}" target="_blank">${location.origin}${apiUrl}</a>`;

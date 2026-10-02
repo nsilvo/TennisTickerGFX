@@ -758,11 +758,17 @@ function playerInfoHTML(m){
 }
 
 function ltaLinksHTML(m){
-    const names = matchPlayerEntries(m).map(p => p.name);
-    if (!names.length) return '';
-    const links = names.map(n =>
-        `<a href="https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(n)}" target="_blank" rel="noopener">${esc(n)} ↗</a>`
-    ).join('');
+    const entries = matchPlayerEntries(m);
+    if (!entries.length) return '';
+    const links = entries.map(p => {
+        const d = playerCache.get(p.key);
+        const name = (d && d.name) ? d.name : p.name;
+        // Direct profile link when staff have pinned one; name search otherwise
+        const url = (d && d.lta_url)
+            ? d.lta_url
+            : `https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(name)}`;
+        return `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}${d && d.lta_url ? '' : ' (search)'} ↗</a>`;
+    }).join('');
     return `<div class="extra-line lta-links"><span class="extra-label">LTA player lookup</span>${links}</div>`;
 }
 

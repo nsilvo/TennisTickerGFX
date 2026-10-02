@@ -255,9 +255,18 @@ class XMLCacheManager:
                 hometown TEXT,
                 career TEXT,
                 notes TEXT,
+                lta_url TEXT,
                 updated_at INTEGER
             );
         """)
+        # Migration for DBs created before lta_url existed
+        try:
+            cursor.execute("ALTER TABLE player_bios ADD COLUMN lta_url TEXT")
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
         # Score progression history, one row per score change (for commentary graphs)
         cursor.execute("""
@@ -328,7 +337,7 @@ class XMLCacheManager:
     # Player bios (commentator spotter data entered via /players)
     # ----------------------------------------------------------------
 
-    PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes")
+    PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url")
 
     def get_player_bio(self, player_key):
         """Return the saved bio dict for a player key, or None."""
@@ -1847,6 +1856,7 @@ def api_player_detail(player_name):
         "hometown": bio.get('hometown') or '',
         "career": bio.get('career') or '',
         "notes": bio.get('notes') or '',
+        "lta_url": bio.get('lta_url') or '',
         "tournament_wins": wins,
         "tournament_losses": losses,
         "tournament_record": f"{wins}-{losses}",
