@@ -1201,14 +1201,24 @@ def resolve_match(matchid=None, court=None, auto_single_live=False, fallback_any
 
     all_matches = manager.get_latest_data()
 
+    # Prefer an exact court-name match ("LTA-OC-2"); fall back to the numeric
+    # token ("2") for callers that only pass a court number.
+    court_token = str(court or '').strip().lower()
     court_number = normalize_court_number(court)
 
-    if court_number:
+    court_matches = []
+    if court_token:
+        court_matches = [
+            x for x in all_matches
+            if str(x.get("court") or '').strip().lower() == court_token
+        ]
+    if not court_matches and court_number:
         court_matches = [
             x for x in all_matches
             if normalize_court_number(x.get("court")) == court_number
         ]
 
+    if court_token or court_number:
         if court_matches:
             live = [
                 x for x in court_matches
@@ -2318,7 +2328,7 @@ def caspar_bug():
         debug_mode=debug_mode,
         bug_logo_url=bug_logo_url,
         bug_style=get_bug_style(),
-        bug_court=normalize_court_number(court or (match_data or {}).get("court"))
+        bug_court=str(court or (match_data or {}).get("court") or '').strip()
     )
 
 
@@ -2384,6 +2394,85 @@ def caspar_scoreboard():
 
 
 # ====================================================================
+# Per-court graphics page + show/hide control API
+# ====================================================================
+
+GRAPHIC_NAMES = ("bug", "lower_third", "winner")
+GRAPHIC_ACTIONS = ("show", "hide")
+GRAPHICS_DEFAULT = {"bug": True, "lower_third": False, "winner": False}
+GRAPHICS_STATE = {}  # court -> {graphic: visible}
+
+
+def get_graphics_state(court):
+    with state_lock:
+        return dict(GRAPHICS_STATE.get(court, GRAPHICS_DEFAULT))
+
+
+@app.route('/api/v1/graphics/<path:court>/<graphic>/<action>', methods=['GET', 'POST'])
+def graphics_command(court, graphic, action):
+    """
+    Show/hide a graphic on a court's graphics page (/caspar/court/).
+    GET or POST e.g. /api/v1/graphics/LTA-OC-1/lower_third/show
+    Graphics: bug, lower_third, winner. Actions: show, hide.
+    """
+    court = str(court).strip()
+    graphic = graphic.strip().lower()
+    action = action.strip().lower()
+
+    if graphic not in GRAPHIC_NAMES:
+        return jsonify({"error": f"Unknown graphic '{graphic}'. Use one of: {', '.join(GRAPHIC_NAMES)}."}), 400
+    if action not in GRAPHIC_ACTIONS:
+        return jsonify({"error": f"Unknown action '{action}'. Use 'show' or 'hide'."}), 400
+    if not court:
+        return jsonify({"error": "Court is required."}), 400
+
+    with state_lock:
+        state = dict(GRAPHICS_STATE.get(court, GRAPHICS_DEFAULT))
+        state[graphic] = (action == "show")
+        GRAPHICS_STATE[court] = state
+
+    socketio.emit('graphic_command', {
+        "court": court,
+        "graphic": graphic,
+        "action": action,
+        "state": state
+    }, to=f"court_{court}")
+
+    return jsonify({"status": "success", "court": court, "graphic": graphic,
+                    "action": action, "state": state})
+
+
+@app.route('/api/v1/graphics/<path:court>', methods=['GET'])
+def graphics_state(court):
+    """Current visibility state of all graphics on a court's graphics page."""
+    court = str(court).strip()
+    return jsonify({"status": "success", "court": court, "state": get_graphics_state(court)})
+
+
+@app.route('/caspar/court/', methods=['GET'])
+def caspar_court_page():
+    """
+    Single overlay page per court for CasparCG/vMix: score bug, lower-third
+    (names + flags) and winner graphic, controlled via /api/v1/graphics/...
+    The bug auto-hides and the winner graphic auto-shows when the current
+    match gains a winner.
+    """
+    court = (request.args.get("court") or '').strip()
+    debug_mode = request.args.get("debug", "0") == "1"
+
+    match_data = resolve_match(court=court, auto_single_live=True, fallback_any=False) if court else None
+
+    return render_template(
+        "caspar_court.html",
+        court=court,
+        match_data=match_data,
+        debug_mode=debug_mode,
+        bug_style=get_bug_style(),
+        graphics_state=get_graphics_state(court)
+    )
+
+
+# ====================================================================
 # SocketIO Handlers
 # ====================================================================
 
@@ -2422,9 +2511,7 @@ def handle_subscribe(data):
                 snapshot = next((x for x in manager.get_latest_data()
                                  if str(x.get('matchid')) == matchid), None)
             if snapshot is None and court:
-                court_number = normalize_court_number(court)
-                if court_number:
-                    snapshot = resolve_match(court=court_number, auto_single_live=True, fallback_any=True)
+                snapshot = resolve_match(court=court, auto_single_live=True, fallback_any=True)
 
             if snapshot:
                 emit('match_update', {
