@@ -1,0 +1,704 @@
+<!--
+File: templates/score.html
+Description: Courtside scoring for tennis and padel (phone / iPad): pick a match, set it
+             live and score every point - serves, faults, aces, winners, errors, penalties,
+             retirements - with the score going straight to every screen and graphic.
+Author: Nathan Silveston
+Contact: nathan@nkpa.co.uk | +44 7515 018048
+Copyright (c) 2025 Nathan Silveston. All rights reserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0b11">
+<title>🎾 Scoring</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+:root {
+    --text: #f5f5f7;
+    --muted: #a0a0b0;
+    --gold: #ffc107;
+    --green: #3ddc84;
+    --red: #ff4b5c;
+    --border: #333344;
+    --panel: rgba(14,14,24,0.92);
+    --s1: #3b8ae0;
+    --s2: #e06a35;
+    --serve: #ffd700;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+    margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at top, #202035 0, #0b0b11 55%, #05050a 100%) fixed;
+    color: var(--text); line-height: 1.4;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    overscroll-behavior: none;
+}
+button { font-family: inherit; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.hidden { display: none !important; }
+a { color: #8ab4ff; }
+.muted { color: var(--muted); }
+.wrap { max-width: 1200px; margin: 0 auto; }
+
+/* --- top bar --- */
+.topbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.topbar h1 { font-size: 1.1rem; margin: 0; letter-spacing: 0.04em; }
+.topbar .event { font-size: 0.85rem; color: var(--muted); }
+.pill {
+    font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+}
+.pill.live { color: var(--green); border-color: rgba(61,220,132,0.6); background: rgba(61,220,132,0.12); }
+.pill.warmup { color: var(--gold); border-color: rgba(255,193,7,0.6); background: rgba(255,193,7,0.12); }
+.pill.suspended { color: var(--red); border-color: rgba(255,75,92,0.6); background: rgba(255,75,92,0.12); }
+.timer { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--muted); }
+.spacer { flex: 1; }
+.btn {
+    border-radius: 12px; border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    padding: 12px 16px; font-size: 0.95rem; font-weight: 700; cursor: pointer; min-height: 48px;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.small { padding: 8px 12px; font-size: 0.82rem; min-height: 40px; }
+.btn.gold { border-color: rgba(255,193,7,0.7); background: rgba(255,193,7,0.16); color: var(--gold); }
+.btn.danger { border-color: rgba(255,75,92,0.6); background: rgba(255,75,92,0.12); color: var(--red); }
+.btn.danger.armed { background: rgba(255,75,92,0.45); color: #fff; }
+.btn.on { background: rgba(255,215,0,0.25); border-color: var(--serve); }
+
+/* --- picker --- */
+.search { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid var(--border); background: rgba(0,0,0,0.35); color: var(--text); font-size: 1rem; margin-bottom: 12px; }
+.courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+.court { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.court h2 { margin: 0 0 6px; font-size: 1rem; color: var(--gold); }
+.pick {
+    display: block; text-decoration: none; color: var(--text); padding: 10px 12px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08); margin-top: 8px; background: rgba(255,255,255,0.03);
+}
+.pick:active { background: rgba(255,193,7,0.12); }
+.pick .names { font-weight: 700; }
+.pick .meta { font-size: 0.78rem; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+
+/* --- setup --- */
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+.card h2 { margin: 0 0 10px; font-size: 1rem; letter-spacing: 0.04em; }
+label.field { display: block; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; }
+select, input[type=number] {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
+    background: rgba(0,0,0,0.35); color: var(--text); font-size: 1rem;
+}
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 12px; }
+.choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.choice .btn { min-height: 64px; }
+.check { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 0.95rem; }
+.check input { width: 22px; height: 22px; }
+.start-row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 16px; }
+.start-row .btn { min-height: 64px; font-size: 1.05rem; }
+
+/* --- scoring --- */
+.board { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 6px 14px; }
+.row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 72px; gap: 10px; align-items: center; padding: 10px 0; }
+.row + .row { border-top: 1px solid rgba(255,255,255,0.08); }
+.serve-dot { width: 14px; height: 14px; border-radius: 50%; }
+.serve-dot.on { background: var(--serve); box-shadow: 0 0 10px var(--serve); }
+.name { font-weight: 800; font-size: clamp(1rem, 2.6vw, 1.5rem); overflow-wrap: anywhere; }
+.row.s1 .name { color: #7db6f5; }
+.row.s2 .name { color: #f39a6f; }
+.sets { display: flex; gap: 6px; }
+.set { min-width: 34px; text-align: center; padding: 4px 6px; border-radius: 8px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); font-weight: 700; font-size: clamp(0.95rem, 2.2vw, 1.25rem); font-variant-numeric: tabular-nums; }
+.set.won { background: rgba(61,220,132,0.28); border-color: rgba(61,220,132,0.8); }
+.set.cur { border-color: var(--gold); }
+.set sup { font-size: 0.6em; color: var(--muted); }
+.pts { text-align: right; font-size: clamp(1.6rem, 5vw, 2.6rem); font-weight: 900; color: var(--serve); font-variant-numeric: tabular-nums; }
+
+.banners { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; min-height: 34px; }
+.banner { padding: 6px 12px; border-radius: 999px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.banner.bp { background: rgba(255,75,92,0.2); color: #ff8a95; border: 1px solid rgba(255,75,92,0.6); }
+.banner.sp { background: rgba(255,193,7,0.18); color: var(--gold); border: 1px solid rgba(255,193,7,0.6); }
+.banner.mp { background: rgba(255,193,7,0.35); color: #fff; border: 1px solid var(--gold); }
+.banner.gp { background: rgba(160,120,255,0.2); color: #c8b3ff; border: 1px solid rgba(200,179,255,0.6); }
+.banner.info { background: rgba(77,163,255,0.15); color: #9cc8ff; border: 1px solid rgba(77,163,255,0.5); }
+.banner.ends { background: rgba(61,220,132,0.2); color: var(--green); border: 1px solid rgba(61,220,132,0.6); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.55; } }
+
+.serve-bar { display: grid; grid-template-columns: minmax(0, 1.4fr) 1fr 1fr 0.8fr; gap: 10px; align-items: stretch; margin-bottom: 10px; }
+.serve-info { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; display: flex; flex-direction: column; justify-content: center; }
+.serve-info .who { font-weight: 800; overflow-wrap: anywhere; }
+.serve-info .which { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--serve); }
+.serve-info .which.second { color: #ff8a95; }
+.serve-bar .btn { min-height: 64px; font-size: 1rem; }
+.btn.fault { border-color: rgba(255,75,92,0.6); color: #ff8a95; }
+.btn.fault.df { background: rgba(255,75,92,0.3); color: #fff; }
+.btn.ace { border-color: rgba(255,215,0,0.6); color: var(--serve); }
+
+.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.side { display: flex; flex-direction: column; gap: 8px; }
+.point-btn {
+    min-height: clamp(120px, 24vh, 220px); border-radius: 18px; border: 2px solid; color: #fff; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px;
+}
+.point-btn .lbl { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.7); }
+.point-btn .who { font-size: clamp(1.05rem, 3vw, 1.6rem); font-weight: 900; text-align: center; overflow-wrap: anywhere; }
+.side.s1 .point-btn { background: rgba(59,138,224,0.25); border-color: rgba(59,138,224,0.9); }
+.side.s2 .point-btn { background: rgba(224,106,53,0.25); border-color: rgba(224,106,53,0.9); }
+.point-btn:active:not(:disabled) { filter: brightness(1.25); transform: scale(0.985); }
+.point-btn:disabled { opacity: 0.35; }
+.kinds { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.kinds .btn { min-height: 52px; padding: 6px; font-size: 0.78rem; line-height: 1.15; }
+.kinds .btn small { display: block; font-size: 0.68rem; color: var(--muted); font-weight: 600; }
+
+.toolbar { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 10px; margin-top: 10px; }
+.toolbar .btn { min-height: 56px; }
+.btn.undo { font-size: 1.05rem; }
+
+.notice { padding: 10px 14px; border-radius: 12px; margin-bottom: 10px; font-size: 0.92rem; }
+.notice.error { background: rgba(255,75,92,0.14); border: 1px solid rgba(255,75,92,0.5); color: #ff8a95; }
+.notice.info { background: rgba(77,163,255,0.12); border: 1px solid rgba(77,163,255,0.5); }
+.notice.done { background: rgba(255,193,7,0.12); border: 1px solid rgba(255,193,7,0.6); font-size: 1.05rem; font-weight: 700; }
+.toast {
+    position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: rgba(8,8,14,0.96); border: 1px solid var(--border); padding: 10px 18px; border-radius: 999px;
+    font-weight: 700; z-index: 50; pointer-events: none; transition: opacity 0.3s;
+}
+
+/* --- sheet (more menu) --- */
+.sheet-back { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 40; }
+.sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; max-height: 86vh; overflow-y: auto;
+    background: #12121c; border-top: 1px solid var(--border); border-radius: 20px 20px 0 0;
+    padding: 16px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+.sheet h3 { margin: 16px 0 8px; font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.sheet h3:first-child { margin-top: 0; }
+.sheet .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.sheet-inner { max-width: 900px; margin: 0 auto; }
+.games-adjust { display: flex; align-items: center; gap: 8px; }
+.games-adjust strong { min-width: 28px; text-align: center; font-size: 1.2rem; }
+
+/* --- stats --- */
+.stats { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.stats td { padding: 7px 4px; border-top: 1px solid rgba(255,255,255,0.07); font-variant-numeric: tabular-nums; }
+.stats td:first-child { text-align: right; font-weight: 700; width: 30%; }
+.stats td:last-child { text-align: left; font-weight: 700; width: 30%; }
+.stats td.lbl { text-align: center; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.recent { list-style: none; margin: 8px 0 0; padding: 0; font-size: 0.85rem; color: var(--muted); }
+.recent li { padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+.recent strong { color: var(--text); }
+
+@media (max-width: 640px) {
+    .serve-bar { grid-template-columns: 1fr 1fr 1fr; }
+    .serve-info { grid-column: 1 / -1; }
+    .toolbar { grid-template-columns: 1fr 1fr; }
+    .kinds { grid-template-columns: 1fr; }
+    .kinds .btn { min-height: 44px; }
+    .start-row { grid-template-columns: 1fr; }
+    .row { grid-template-columns: 16px minmax(0, 1fr) auto 54px; gap: 6px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+    <div class="topbar">
+        <a href="/score" class="btn small" id="back-btn">← Matches</a>
+        <h1 id="title">🎾 Scoring</h1>
+        <span class="event" id="event"></span>
+        <span class="spacer"></span>
+        <span class="pill hidden" id="status-pill"></span>
+        <span class="timer" id="timer"></span>
+        <a href="/" class="btn small" id="home-btn">Dashboard</a>
+    </div>
+    <div id="notice"></div>
+
+    <!-- 1. Pick a match -->
+    <section id="picker" class="hidden">
+        <input class="search" id="search" type="search" placeholder="Search players, courts or events…" autocomplete="off">
+        <div class="courts" id="courts"><div class="muted">Loading matches…</div></div>
+    </section>
+
+    <!-- 2. Set up and set live -->
+    <section id="setup" class="hidden">
+        <div class="board" id="setup-board"></div>
+        <div class="card" style="margin-top:12px">
+            <h2>Match format</h2>
+            <select id="preset">
+                {% for key, label in presets.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+                <option value="custom">Custom…</option>
+            </select>
+            <div id="custom" class="hidden">
+                <div class="grid2">
+                    <div><label class="field">Sets</label><select data-rule="best_of"><option value="1">1 set</option><option value="3" selected>Best of 3</option><option value="5">Best of 5</option></select></div>
+                    <div><label class="field">Games per set</label><input type="number" data-rule="games" min="1" max="9" value="6"></div>
+                    <div><label class="field">Tiebreak at</label><input type="number" data-rule="tiebreak_at" min="1" max="9" value="6"></div>
+                    <div><label class="field">Tiebreak to</label><input type="number" data-rule="tiebreak_points" min="3" max="15" value="7"></div>
+                    <div><label class="field">Deciding set</label><select data-rule="final_set">
+                        <option value="full">Normal set</option><option value="advantage">Advantage set (no tiebreak)</option>
+                        <option value="tb10">10-point tiebreak at tiebreak score</option><option value="mtb">Match tiebreak instead of set</option></select></div>
+                    <div><label class="field">Match tiebreak to</label><input type="number" data-rule="mtb_points" min="5" max="15" value="10"></div>
+                    <div><label class="field">At deuce</label><select data-rule="deuce_mode">
+                        <option value="advantage">Advantage</option><option value="golden">Golden point / no-ad</option><option value="star">Star point (padel)</option></select></div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Who serves first?</h2>
+            <div class="choice" id="first-server"></div>
+            <label class="check" id="from-feed-wrap"><input type="checkbox" id="from-feed" checked> Carry on from the current feed score</label>
+            <label class="check"><input type="checkbox" id="lock"> Score is mine: ignore TennisTicker updates for this match</label>
+            <div class="start-row">
+                <button class="btn" type="button" data-start="warmup">⏱ Warm-up</button>
+                <button class="btn gold" type="button" data-start="live">▶ Start match · set live</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. Score -->
+    <section id="scoring" class="hidden">
+        <div class="board" id="board"></div>
+        <div class="banners" id="banners"></div>
+        <div class="serve-bar">
+            <div class="serve-info"><span class="which" id="serve-which"></span><span class="who" id="serve-who"></span></div>
+            <button class="btn fault" type="button" id="fault-btn" data-act="fault">Fault</button>
+            <button class="btn ace" type="button" data-act="ace">Ace</button>
+            <button class="btn" type="button" data-act="let">Let</button>
+        </div>
+        <div class="sides">
+            <div class="side s1" id="side1"></div>
+            <div class="side s2" id="side2"></div>
+        </div>
+        <div class="toolbar">
+            <button class="btn undo gold" type="button" data-act="undo">↶ Undo</button>
+            <button class="btn" type="button" data-act="swap-server">⇄ Server</button>
+            <button class="btn" type="button" data-act="stats">📊 Stats</button>
+            <button class="btn" type="button" data-act="more">☰ More</button>
+        </div>
+        <div class="card hidden" id="stats-card" style="margin-top:12px"></div>
+    </section>
+</div>
+
+<div class="sheet-back hidden" id="sheet-back"></div>
+<div class="sheet hidden" id="sheet"><div class="sheet-inner" id="sheet-inner"></div></div>
+<div class="toast hidden" id="toast"></div>
+
+<script id="score-config" type="application/json">{{ {"match_id": match_id} | tojson }}</script>
+<script>
+const MATCH_ID = JSON.parse(document.getElementById('score-config').textContent).match_id;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let data = null;           // last /api/v1/manual response
+let firstServer = 1;
+let queue = Promise.resolve();
+let armed = '';            // two-tap confirmations
+let armTimer = null;
+
+function toast(msg){
+    const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); t.style.opacity = 1;
+    clearTimeout(toast.t); toast.t = setTimeout(() => { t.style.opacity = 0; setTimeout(() => t.classList.add('hidden'), 300); }, 1600);
+}
+function notice(html, cls){ $('notice').innerHTML = html ? `<div class="notice ${cls || 'error'}">${html}</div>` : ''; }
+function buzz(){ if (navigator.vibrate) navigator.vibrate(12); }
+
+// Keep the screen awake while scoring (supported on iPadOS 16.4+, Android Chrome)
+let wakeLock = null;
+async function keepAwake(){
+    try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } } catch(e){}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && data && data.active) keepAwake(); });
+
+// ====================================================================
+// 1. Match picker
+// ====================================================================
+let pickerMatches = [];
+async function loadPicker(){
+    $('picker').classList.remove('hidden');
+    $('back-btn').classList.add('hidden');
+    try {
+        const j = await (await fetch('/api/v1/scores')).json();
+        pickerMatches = j.matches || [];
+        renderPicker();
+    } catch(e){ notice('Could not load matches.'); }
+}
+function bucket(m){
+    const s = String(m.matchstatus || '').toUpperCase();
+    if (m.is_plan == 1 || s === 'UPCOMING') return 'UPCOMING';
+    if (['IN PROGRESS', 'WARMUP', 'TEST'].some(k => s.includes(k))) return 'LIVE';
+    if (m.winner_name || s.includes('COMPLETED')) return 'COMPLETED';
+    return s || 'UPCOMING';
+}
+function scoreLine(m){
+    const out = [];
+    for (let i = 1; i <= (+m.sets_played_count || 0); i++){
+        const a = m[`set${i}_p1`], b = m[`set${i}_p2`];
+        if (a != null && (a || b)) out.push(`${a}-${b}`);
+    }
+    return out.join(' ');
+}
+function renderPicker(){
+    const q = $('search').value.trim().toLowerCase();
+    const byCourt = {};
+    pickerMatches.forEach(m => {
+        const text = `${m.player1} ${m.player2} ${m.court} ${m.matchname}`.toLowerCase();
+        if (q && !text.includes(q)) return;
+        (byCourt[m.court || 'No court'] = byCourt[m.court || 'No court'] || []).push(m);
+    });
+    const order = { LIVE: 0, UPCOMING: 1, SUSPENDED: 2, COMPLETED: 3 };
+    // Courts with something to score (live / being scored / upcoming) first
+    const rank = c => Math.min(...byCourt[c].map(m => m.manual ? -1 : (order[bucket(m)] ?? 2)));
+    const courts = Object.keys(byCourt).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+    $('courts').innerHTML = courts.map(c => {
+        const ms = byCourt[c].sort((a, b) => (order[bucket(a)] ?? 2) - (order[bucket(b)] ?? 2) || String(a.schedtime || '').localeCompare(String(b.schedtime || '')));
+        return `<div class="court"><h2>🎾 ${esc(c)}</h2>${ms.slice(0, 6).map(m => {
+            const b = bucket(m);
+            return `<a class="pick" href="/score?match=${encodeURIComponent(m.matchid)}">
+                <div class="names">${esc(m.player1)} <span class="muted">v</span> ${esc(m.player2)}</div>
+                <div class="meta"><span class="pill ${b === 'LIVE' ? 'live' : ''}">${esc(b)}</span>
+                    ${m.manual ? '<span class="pill warmup">✍️ Scored here</span>' : ''}
+                    ${m.staged ? '<span class="pill">Staged</span>' : ''}
+                    <span>${esc(m.matchname || '')}</span>
+                    ${m.schedtime ? `<span>${esc(m.schedtime)}</span>` : ''}
+                    ${scoreLine(m) ? `<strong>${esc(scoreLine(m))}</strong>` : ''}</div>
+            </a>`;
+        }).join('')}</div>`;
+    }).join('') || '<div class="muted">No matches found.</div>';
+}
+$('search').addEventListener('input', renderPicker);
+
+// ====================================================================
+// 2/3. Load a match: setup or scoring
+// ====================================================================
+async function loadMatch(){
+    try {
+        const resp = await fetch(`/api/v1/manual/${encodeURIComponent(MATCH_ID)}`);
+        const j = await resp.json();
+        if (!resp.ok){ notice(esc(j.error || 'Match not found.') + ' <a href="/score">Pick another match</a>'); return; }
+        data = j;
+        render();
+    } catch(e){ notice('Could not reach the server - check the connection.'); }
+}
+
+function names(){ return (data && data.names) || ['Side 1', 'Side 2']; }
+
+function render(){
+    const m = data.match || {};
+    $('title').textContent = `🎾 ${m.court || 'Court'}`;
+    $('event').textContent = [m.tname, m.matchname].filter(Boolean).join(' · ');
+    if (!data.active){ renderSetup(); return; }
+    $('setup').classList.add('hidden');
+    $('scoring').classList.remove('hidden');
+    keepAwake();
+    renderScoring();
+}
+
+function setsHTML(st, who){
+    const cells = st.sets.map(([a, b, tb]) => {
+        const mine = who === 1 ? a : b, theirs = who === 1 ? b : a;
+        return `<span class="set${mine > theirs ? ' won' : ''}">${mine}${tb != null && mine < theirs ? `<sup>${tb}</sup>` : ''}</span>`;
+    });
+    if (!st.winner) cells.push(`<span class="set cur">${st.games[who - 1]}</span>`);
+    return cells.join('');
+}
+
+function boardHTML(st, live){
+    const [n1, n2] = names();
+    const row = who => `<div class="row s${who}">
+        <span class="serve-dot${live && !st.winner && st.server === who ? ' on' : ''}"></span>
+        <span class="name">${esc(who === 1 ? n1 : n2)}${st.winner === who ? ' 🏆' : ''}</span>
+        <span class="sets">${setsHTML(st, who)}</span>
+        <span class="pts">${esc(st.points[who - 1] || '')}</span>
+    </div>`;
+    return row(1) + row(2);
+}
+
+function renderSetup(){
+    $('scoring').classList.add('hidden');
+    $('setup').classList.remove('hidden');
+    const m = data.match || {};
+    const padel = `${m.tname || ''} ${m.matchname || ''} ${m.court || ''}`.toLowerCase().includes('padel');
+    const preset = $('preset');
+    if (!preset.dataset.touched) preset.value = padel ? 'padel_golden_mtb' : 'tennis_bo3';
+    const [n1, n2] = names();
+    $('setup-board').innerHTML = `<div class="row s1"><span></span><span class="name">${esc(n1)}</span><span class="sets">${esc(scoreLine(m))}</span><span></span></div>
+        <div class="row s2"><span></span><span class="name">${esc(n2)}</span><span></span><span></span></div>`;
+    $('first-server').innerHTML = [1, 2].map(w => `<button type="button" class="btn${firstServer === w ? ' on' : ''}" data-first="${w}">🎾 ${esc(w === 1 ? n1 : n2)}</button>`).join('');
+    const hasScore = (+m.sets_played_count || 0) > 0;
+    $('from-feed-wrap').classList.toggle('hidden', !hasScore);
+}
+
+$('preset').addEventListener('change', e => {
+    e.target.dataset.touched = '1';
+    $('custom').classList.toggle('hidden', e.target.value !== 'custom');
+});
+$('setup').addEventListener('click', e => {
+    const f = e.target.closest('[data-first]');
+    if (f){ firstServer = +f.dataset.first; renderSetup(); return; }
+    const s = e.target.closest('[data-start]');
+    if (!s) return;
+    const preset = $('preset').value;
+    const rules = {};
+    if (preset === 'custom') document.querySelectorAll('#custom [data-rule]').forEach(el => { rules[el.dataset.rule] = el.value; });
+    act('start', {
+        preset: preset === 'custom' ? '' : preset, rules, side: firstServer, status: s.dataset.start,
+        from_feed: !$('from-feed-wrap').classList.contains('hidden') && $('from-feed').checked,
+        lock: $('lock').checked
+    });
+});
+
+// ====================================================================
+// Scoring view
+// ====================================================================
+const KIND_LABEL = { normal: '', ace: 'ace', double_fault: 'double fault', winner: 'winner',
+    forced_error: 'forced error', unforced_error: 'unforced error', penalty: 'penalty point' };
+
+function fmtDuration(sec){
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    return (h ? `${h}:${String(m).padStart(2, '0')}` : `${m}`) + `:${String(s).padStart(2, '0')}`;
+}
+
+function renderScoring(){
+    const st = data.state;
+    const [n1, n2] = names();
+    const live = st.status !== 'warmup';
+    const done = !!st.winner;
+    const pill = $('status-pill');
+    pill.classList.remove('hidden', 'live', 'warmup', 'suspended');
+    const label = done ? (st.end_reason ? `Finished · ${st.end_reason}` : 'Finished') : st.status === 'warmup' ? 'Warm-up' : st.status === 'suspended' ? 'Suspended' : 'Live';
+    pill.textContent = label;
+    pill.classList.add(done ? 'x' : st.status);
+
+    $('board').innerHTML = boardHTML(st, live);
+
+    const banners = [];
+    if (done) banners.push(`<span class="banner mp">🏆 ${esc(st.winner === 1 ? n1 : n2)} win${st.end_reason ? ` (${esc(st.end_reason)})` : ''}</span>`);
+    if (st.change_ends) banners.push('<span class="banner ends">⇄ Change ends</span>');
+    [1, 2].forEach(w => {
+        const f = st.flags[w];
+        if (!f) return;
+        const cls = f === 'match point' ? 'mp' : f === 'set point' ? 'sp' : f === 'break point' ? 'bp' : 'info';
+        if (f !== 'game point') banners.push(`<span class="banner ${cls}">${esc(f)} · ${esc(w === 1 ? n1 : n2)}</span>`);
+    });
+    if (st.deciding_point) banners.push(`<span class="banner gp">★ ${esc(st.deciding_point)} point</span>`);
+    if (st.in_match_tiebreak) banners.push(`<span class="banner info">Match tiebreak to ${st.rules.mtb_points}</span>`);
+    else if (st.in_tiebreak) banners.push('<span class="banner info">Tiebreak</span>');
+    if (st.status === 'suspended') banners.push('<span class="banner bp">Play suspended</span>');
+    $('banners').innerHTML = banners.join('');
+
+    // Serve
+    const serverName = st.server === 1 ? n1 : n2;
+    $('serve-who').textContent = done ? '—' : serverName;
+    $('serve-which').textContent = done ? 'Match finished' : st.serve === 2 ? '2nd serve' : '1st serve';
+    $('serve-which').classList.toggle('second', st.serve === 2);
+    const fb = $('fault-btn');
+    fb.textContent = st.serve === 2 ? 'Double fault' : 'Fault';
+    fb.classList.toggle('df', st.serve === 2);
+    document.querySelectorAll('.serve-bar .btn').forEach(b => b.disabled = done);
+
+    // Point buttons per side; errors are made by that side (point to the opponent)
+    [1, 2].forEach(w => {
+        const me = w === 1 ? n1 : n2, opp = w === 1 ? n2 : n1;
+        $(`side${w}`).innerHTML = `
+            <button type="button" class="point-btn" data-point="${w}"${done ? ' disabled' : ''}>
+                <span class="lbl">Point · ${w === 1 ? '1 / ←' : '2 / →'}</span><span class="who">${esc(me)}</span></button>
+            <div class="kinds">
+                <button type="button" class="btn" data-point="${w}" data-kind="winner"${done ? ' disabled' : ''}>Winner<small>point ${esc(short(me))}</small></button>
+                <button type="button" class="btn" data-point="${3 - w}" data-kind="forced_error"${done ? ' disabled' : ''}>Forced error<small>by ${esc(short(me))}</small></button>
+                <button type="button" class="btn" data-point="${3 - w}" data-kind="unforced_error"${done ? ' disabled' : ''}>Unforced error<small>by ${esc(short(me))}</small></button>
+            </div>`;
+    });
+    document.querySelector('[data-act="undo"]').disabled = !st.can_undo;
+
+    // Feed status
+    if (data.feed_newer) notice(`📡 TennisTicker has updated the score since your last action, so the feed's score is on air.
+        Your next point carries on from it. <button class="btn small" type="button" data-act="resync">Sync now</button>
+        <button class="btn small" type="button" data-act="lock-on">Ignore feed for this match</button>`, 'info');
+    else if (done) notice(`Match finished. The result is on air. <button class="btn small" type="button" data-act="stop-armed">Hand back to feed</button>`, 'done');
+    else notice('');
+
+    if (!$('stats-card').classList.contains('hidden')) renderStats();
+    if (!$('sheet').classList.contains('hidden')) renderSheet();
+    tick();
+}
+
+function short(name){
+    // "John Byrne / Colin McGill" -> "Byrne/McGill"
+    return String(name).split('/').map(p => p.trim().split(' ').slice(-1)[0]).join('/');
+}
+
+function tick(){
+    if (!data || !data.active) return;
+    const st = data.state;
+    $('timer').textContent = st.duration_sec ? fmtDuration(st.duration_sec + (st.winner ? 0 : Math.floor((Date.now() - loadedAt) / 1000))) : '';
+}
+let loadedAt = Date.now();
+setInterval(tick, 1000);
+
+function renderStats(){
+    const st = data.state, s1 = st.stats[1] || st.stats['1'], s2 = st.stats[2] || st.stats['2'];
+    const [n1, n2] = names();
+    const pct = v => v == null ? '–' : `${v}%`;
+    const rows = [
+        ['Aces', s1.aces, s2.aces],
+        ['Double faults', s1.double_faults, s2.double_faults],
+        ['1st serve in', `${pct(s1.first_serve_pct)} (${s1.first_serve_in}/${s1.serve_points})`, `${pct(s2.first_serve_pct)} (${s2.first_serve_in}/${s2.serve_points})`],
+        ['1st serve pts won', pct(s1.first_serve_won_pct), pct(s2.first_serve_won_pct)],
+        ['2nd serve pts won', pct(s1.second_serve_won_pct), pct(s2.second_serve_won_pct)],
+        ['Winners', s1.winners, s2.winners],
+        ['Unforced errors', s1.unforced_errors, s2.unforced_errors],
+        ['Forced errors', s1.forced_errors, s2.forced_errors],
+        ['Break points won', `${s1.break_points_won}/${s1.break_points}`, `${s2.break_points_won}/${s2.break_points}`],
+        ['Service games won', `${s1.service_games_won}/${s1.service_games}`, `${s2.service_games_won}/${s2.service_games}`],
+        ['Total points won', s1.points_won, s2.points_won],
+    ];
+    const recent = (st.recent || []).slice().reverse().map(e => {
+        const who = e.w === 1 ? n1 : n2;
+        const kind = KIND_LABEL[e.t] ? ` · ${KIND_LABEL[e.t]}` : '';
+        return `<li><strong>${esc(short(who))}</strong>${esc(kind)}${e.sn === 2 && e.t !== 'double_fault' ? ' · 2nd serve' : ''}${e.bp ? ' · break point' : ''}</li>`;
+    }).join('');
+    $('stats-card').innerHTML = `<h2>Match stats</h2>
+        <table class="stats"><tr><td>${esc(short(n1))}</td><td class="lbl"></td><td>${esc(short(n2))}</td></tr>
+        ${rows.map(([l, a, b]) => `<tr><td>${esc(a)}</td><td class="lbl">${esc(l)}</td><td>${esc(b)}</td></tr>`).join('')}</table>
+        ${recent ? `<h2 style="margin-top:14px">Recent points</h2><ul class="recent">${recent}</ul>` : ''}`;
+}
+
+// ====================================================================
+// More menu (bottom sheet)
+// ====================================================================
+function renderSheet(){
+    const st = data.state;
+    const [n1, n2] = names();
+    const status = st.status;
+    $('sheet-inner').innerHTML = `
+        <h3>Match status</h3>
+        <div class="opts">
+            <button class="btn${status === 'warmup' ? ' on' : ''}" data-act="status" data-status="warmup"${st.winner ? ' disabled' : ''}>⏱ Warm-up</button>
+            <button class="btn${status === 'live' ? ' on' : ''}" data-act="status" data-status="live"${st.winner ? ' disabled' : ''}>▶ Live</button>
+            <button class="btn${status === 'suspended' ? ' on' : ''}" data-act="status" data-status="suspended"${st.winner ? ' disabled' : ''}>⏸ Suspend (rain / light)</button>
+        </div>
+        <h3>Point penalty (code violation)</h3>
+        <div class="opts">
+            <button class="btn${armed === 'pen1' ? ' danger armed' : ''}" data-act="arm" data-arm="pen1"${st.winner ? ' disabled' : ''}>${armed === 'pen1' ? 'Tap again: ' : ''}Point to ${esc(short(n1))}</button>
+            <button class="btn${armed === 'pen2' ? ' danger armed' : ''}" data-act="arm" data-arm="pen2"${st.winner ? ' disabled' : ''}>${armed === 'pen2' ? 'Tap again: ' : ''}Point to ${esc(short(n2))}</button>
+        </div>
+        <h3>End match early · winner</h3>
+        <div class="opts">
+            ${['retired', 'walkover', 'default'].flatMap(r => [1, 2].map(w => {
+                const key = `end-${r}-${w}`;
+                return `<button class="btn${armed === key ? ' danger armed' : ' danger'}" data-act="arm" data-arm="${key}"${st.winner ? ' disabled' : ''}>
+                    ${armed === key ? 'Tap again: ' : ''}${esc(short(w === 1 ? n1 : n2))} win · ${esc(r === 'retired' ? 'opp. retired' : r)}</button>`;
+            })).join('')}
+        </div>
+        <h3>Corrections · games this set</h3>
+        <div class="opts">
+            ${[1, 2].map(w => `<div class="games-adjust"><span>${esc(short(w === 1 ? n1 : n2))}</span>
+                <button class="btn small" data-act="games" data-side="${w}" data-delta="-1">−</button>
+                <strong>${st.games[w - 1]}</strong>
+                <button class="btn small" data-act="games" data-side="${w}" data-delta="1">+</button></div>`).join('')}
+        </div>
+        <h3>Format</h3>
+        <div class="opts">
+            <select id="sheet-preset">${[...document.querySelectorAll('#preset option')].filter(o => o.value !== 'custom')
+                .map(o => `<option value="${o.value}"${o.value === st.preset ? ' selected' : ''}>${esc(o.textContent)}</option>`).join('')}</select>
+            <button class="btn" data-act="preset">Apply format</button>
+        </div>
+        <p class="muted" style="font-size:0.85rem">Now: best of ${st.rules.best_of}, sets to ${st.rules.games} (tiebreak at ${st.rules.tiebreak_at}-${st.rules.tiebreak_at}),
+           deciding set: ${esc({ full: 'normal', advantage: 'advantage set', tb10: '10-point tiebreak', mtb: 'match tiebreak' }[st.rules.final_set])},
+           deuce: ${esc(st.rules.deuce_mode)}.</p>
+        <h3>TennisTicker feed</h3>
+        <div class="opts">
+            <button class="btn${data.feed_lock ? ' on' : ''}" data-act="${data.feed_lock ? 'lock-off' : 'lock-on'}">${data.feed_lock ? '🔒 Ignoring feed (tap to allow)' : '🔓 Feed can take over (tap to lock)'}</button>
+            <button class="btn" data-act="resync">Carry on from feed score</button>
+            <button class="btn${armed === 'stop' ? ' danger armed' : ' danger'}" data-act="arm" data-arm="stop">${armed === 'stop' ? 'Tap again to stop scoring' : '⏹ Stop scoring · hand back to feed'}</button>
+        </div>
+        <div style="margin-top:16px"><button class="btn gold" style="width:100%" data-act="close">Done</button></div>`;
+}
+function openSheet(){ $('sheet').classList.remove('hidden'); $('sheet-back').classList.remove('hidden'); renderSheet(); }
+function closeSheet(){ $('sheet').classList.add('hidden'); $('sheet-back').classList.add('hidden'); armed = ''; }
+$('sheet-back').addEventListener('click', closeSheet);
+
+// ====================================================================
+// Actions
+// ====================================================================
+function act(action, extra){
+    buzz();
+    queue = queue.then(async () => {
+        try {
+            const resp = await fetch(`/api/v1/manual/${encodeURIComponent(MATCH_ID)}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, ...(extra || {}) })
+            });
+            const j = await resp.json();
+            if (!resp.ok){ notice(esc(j.error || 'That did not work.')); return; }
+            data = j; loadedAt = Date.now();
+            render();
+        } catch(e){ notice('Could not reach the server - the last action may not have been saved. Check the connection.'); }
+    });
+}
+
+function arm(key){
+    clearTimeout(armTimer);
+    if (armed === key){
+        armed = '';
+        if (key === 'stop'){ act('stop'); closeSheet(); return; }
+        if (key.startsWith('pen')) { act('penalty', { side: +key.slice(3) }); closeSheet(); return; }
+        if (key.startsWith('end-')){ const [, reason, w] = key.split('-'); act('end', { side: +w, reason }); closeSheet(); return; }
+    }
+    armed = key;
+    armTimer = setTimeout(() => { armed = ''; if (!$('sheet').classList.contains('hidden')) renderSheet(); }, 4000);
+    renderSheet();
+}
+
+document.addEventListener('click', e => {
+    const p = e.target.closest('[data-point]');
+    if (p && !p.disabled && data && data.active){ act('point', { side: +p.dataset.point, kind: p.dataset.kind || 'normal' }); return; }
+    const b = e.target.closest('[data-act]');
+    if (!b || b.disabled) return;
+    const a = b.dataset.act;
+    if (a === 'fault') act('fault');
+    else if (a === 'ace') act('ace');
+    else if (a === 'let') toast('Let · replay the serve');
+    else if (a === 'undo') act('undo');
+    else if (a === 'swap-server') act('server', { side: 3 - data.state.server });
+    else if (a === 'stats'){ $('stats-card').classList.toggle('hidden'); renderStats(); }
+    else if (a === 'more') openSheet();
+    else if (a === 'close') closeSheet();
+    else if (a === 'status') act('status', { status: b.dataset.status });
+    else if (a === 'games') act('games', { side: +b.dataset.side, delta: +b.dataset.delta });
+    else if (a === 'preset') act('rules', { preset: $('sheet-preset').value });
+    else if (a === 'lock-on') act('lock', { locked: true });
+    else if (a === 'lock-off') act('lock', { locked: false });
+    else if (a === 'resync') act('resync');
+    else if (a === 'arm') arm(b.dataset.arm);
+    else if (a === 'stop-armed'){ openSheet(); arm('stop'); }
+});
+
+// Hardware keyboard (iPad keyboard / laptop): 1/← 2/→ points, F fault, A ace, U undo
+document.addEventListener('keydown', e => {
+    if (!data || !data.active || e.repeat || e.target.closest && e.target.closest('input, select, textarea')) return;
+    const k = e.key.toLowerCase();
+    if (k === '1' || k === 'arrowleft'){ e.preventDefault(); act('point', { side: 1 }); }
+    else if (k === '2' || k === 'arrowright'){ e.preventDefault(); act('point', { side: 2 }); }
+    else if (k === 'f'){ act('fault'); }
+    else if (k === 'a'){ act('ace'); }
+    else if (k === 'u' || k === 'backspace'){ e.preventDefault(); act('undo'); }
+});
+
+// Other devices scoring or the feed changing this match: refresh our state
+const socket = io(window.location.origin);
+socket.on('connect', () => socket.emit('subscribe_all'));
+let lastSync = 0;
+socket.on('live_updates', d => {
+    if (!MATCH_ID){ if (Date.now() - lastSync > 5000){ lastSync = Date.now(); pickerMatches = d.live_matches || []; renderPicker(); } return; }
+    const m = (d.live_matches || []).find(x => String(x.matchid) === MATCH_ID);
+    if (!m) return;
+    const key = JSON.stringify([m.game1, m.game2, m.sets_played_count, m.matchstatus, m.player2serve, m.serve_number, m.point_flag]);
+    if (key !== live_updates_key){ live_updates_key = key; loadMatch(); }
+});
+let live_updates_key = '';
+
+if (MATCH_ID) loadMatch(); else loadPicker();
+</script>
+</body>
+</html>

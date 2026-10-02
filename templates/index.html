@@ -799,6 +799,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <li><a href="/live_matches">🎬 Live Matches</a></li>
             <li><a href="/stats">📈 Commentary</a></li>
             <li><a href="/schedule">🗓 Schedule</a></li>
+            <li><a href="/score">✍️ Scoring</a></li>
             <li><a href="/players">👤 Players</a></li>
             <li><a href="/api_links">🔗 API Links</a></li>
             <li><a href="/caspar/scoreboard/">📺 Scoreboard</a></li>
@@ -1156,6 +1157,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 <a href="${casparBugUrl}" target="_blank" class="caspar-btn">🎬 Bug</a>
                 <a href="${casparScoreboardUrl}" target="_blank" class="caspar-btn-alt">📺 Scoreboard</a>
                 <a href="${commentaryUrl}" target="_blank" class="caspar-btn-alt">📈 Commentary</a>
+                <a href="/score?match=${encodeURIComponent(matchId)}" target="_blank" class="caspar-btn-alt">✍️ Score</a>
                 <button class="caspar-preview-btn" type="button" onclick="togglePreview('${matchId}')">👁 Preview</button>
             </div>
             <div id="preview-${matchId}" class="caspar-preview hidden">

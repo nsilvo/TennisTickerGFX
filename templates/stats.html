@@ -431,6 +431,7 @@ body.screen-mode .score-view { flex: 1; min-height: 0; overflow-y: auto; }
             <li><a href="/live_matches">🎬 Live Matches</a></li>
             <li><a href="/stats" class="active">📈 Commentary</a></li>
             <li><a href="/schedule">🗓 Schedule</a></li>
+            <li><a href="/score">✍️ Scoring</a></li>
             <li><a href="/players">👤 Players</a></li>
             <li><a href="/api_links">🔗 API Links</a></li>
             <li><a href="/results">📋 Results</a></li>
@@ -1375,7 +1376,9 @@ function manualScoreHTML(m, live){
         return `<div class="score-view">${err}${scoreboard}
             <div class="card manual-start">
                 <h3>Manually score this match</h3>
-                <p class="hint">Use this when the feed isn't covering the court or has stalled. While manual scoring is on,
+                <p class="hint">For courtside scoring with serves, faults, aces and stats use the
+                   <a href="/score?match=${encodeURIComponent(m.matchid)}" target="_blank">Scoring page ↗</a>.
+                   Use this when the feed isn't covering the court or has stalled. While manual scoring is on,
                    your score replaces the feed's on every screen, graphic and API for this match until you hand it back.</p>
                 <div id="manual-start-rules">${rulesFormHTML({ best_of: 3, final_set: padel ? 'mtb' : 'full', golden_point: false }, 'start')}</div>
                 <div class="manual-start-actions">
@@ -1399,7 +1402,8 @@ function manualScoreHTML(m, live){
     return `<div class="score-view">${err}${scoreboard}
         ${st.feed_newer ? `<div class="notice feed-ahead">📡 TennisTicker has updated the score since your last point, so the feed's score is on air.
             Your next point carries on from it. <button type="button" class="btn small" data-manual="resync">Sync to feed now</button></div>` : ''}
-        <div class="manual-phase">${phase} · <span class="hint">keys: 1/← and 2/→ for points, U or Backspace to undo</span></div>
+        <div class="manual-phase">${phase} · <span class="hint">keys: 1/← and 2/→ for points, U or Backspace to undo ·
+            <a href="/score?match=${encodeURIComponent(m.matchid)}" target="_blank">full courtside scoring (serves, faults, stats) ↗</a></span></div>
         <div class="point-row">${sideBtn(1, n1)}${sideBtn(2, n2)}</div>
         <div class="manual-tools">
             <button type="button" class="btn" data-manual="undo"${st.can_undo ? '' : ' disabled'}>↶ Undo</button>

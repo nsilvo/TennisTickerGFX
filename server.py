@@ -361,7 +361,9 @@ class XMLCacheManager:
     def feed_is_newer(self, matchid):
         """True when the feed changed this match's score after the last manual scoring action."""
         state = self.manual_scores.get(str(matchid))
-        return bool(state) and self.feed_score_ts.get(str(matchid), 0) > state.get("updated_at", 0)
+        if not state or state.get("feed_lock"):
+            return False
+        return self.feed_score_ts.get(str(matchid), 0) > state.get("updated_at", 0)
 
     def record_history(self, match):
         """Append one score-progression row (commentary graphs) for a match dict."""
@@ -2138,13 +2140,19 @@ def manual_score_response(match_id):
     state = manager.manual_scores.get(str(match_id))
     match = next((m for m in manager.get_latest_data(all_tournaments=True)
                   if str(m.get('matchid')) == str(match_id)), None)
+    if match is None:
+        match = manager.get_feed_match(match_id)
+    bios = manager.get_all_player_bios()
     return {
         "status": "success",
         "matchid": str(match_id),
+        "names": [full_side_name((match or {}).get("player1_full") or (match or {}).get("player1"), bios),
+                  full_side_name((match or {}).get("player2_full") or (match or {}).get("player2"), bios)],
         "active": state is not None,
         "state": manual_scoring.summary(state) if state else None,
         # The feed changed the score after the last manual action, so the feed's score is on air
         "feed_newer": manager.feed_is_newer(match_id),
+        "feed_lock": bool(state and state.get("feed_lock")),
         "match": match,
     }
 
@@ -2153,16 +2161,22 @@ def manual_score_response(match_id):
 def api_manual_score(match_id):
     """
     GET: current manual scoring state. POST JSON {"action": ...}:
-      start  {from_feed: true, rules: {...}}  begin overriding the feed (carry on from its score by default)
-      point  {side: 1|2}                      award a point
-      undo                                    step back one action
-      server {side: 1|2}                      set who is serving
-      games  {side: 1|2, delta: +1|-1}        correct the current set's games
-      rules  {rules: {...}}                   change format (best_of, final_set, golden_point, ...)
-      resync                                  carry on from the feed's current score
-      stop                                    hand the match back to the feed
-    Whichever source changed the score most recently is shown; scoring a point while the
-    feed is ahead first catches up from the feed's score.
+      start   {from_feed, preset, rules, server: 1|2, status: warmup|live}  begin scoring this match
+      point   {side: 1|2, kind}       award a point; kind: normal, winner, forced_error, unforced_error
+      ace                             point to the server
+      fault                           1st serve fault -> 2nd serve; on 2nd serve = double fault
+      penalty {side: 1|2}             point penalty awarded to side
+      undo                            step back one action
+      server  {side: 1|2}             set who is serving
+      games   {side: 1|2, delta: ±1}  correct the current set's games
+      rules   {preset | rules}        change format
+      status  {status: warmup|live|suspended}
+      end     {side: 1|2, reason: retired|walkover|default}  finish early; side = winner
+      lock    {locked: true|false}    keep this score on air even when the feed changes
+      resync                          carry on from the feed's current score
+      stop                            hand the match back to the feed
+    Whichever source changed the score most recently is shown (unless locked); scoring
+    while the feed is ahead first catches up from the feed's score, keeping the stats log.
     """
     if manager is None:
         return jsonify({"error": "Cache manager not initialized."}), 503
@@ -2176,6 +2190,7 @@ def api_manual_score(match_id):
         side = int(body.get('side') or 0)
     except (TypeError, ValueError):
         side = 0
+    scoring_actions = ('point', 'ace', 'fault', 'penalty', 'games')
 
     with manual_score_lock:
         state = manager.manual_scores.get(match_id)
@@ -2192,20 +2207,34 @@ def api_manual_score(match_id):
         if action == 'start':
             if state is None:
                 padel = 'padel' in f"{feed_match.get('tname') or ''} {feed_match.get('matchname') or ''}".lower()
-                rules = manual_scoring.set_rules(
-                    manual_scoring.new_state(manual_scoring.default_rules(padel)), body.get('rules') or {})["rules"]
-                state = (manual_scoring.state_from_match(feed_match, rules, MAX_SETS)
-                         if body.get('from_feed', True) else manual_scoring.new_state(rules))
+                rules = (manual_scoring.rules_for_preset(body['preset']) if body.get('preset') in manual_scoring.PRESETS
+                         else manual_scoring.default_rules(padel))
+                rules = manual_scoring.set_rules(manual_scoring.new_state(rules), body.get('rules') or {})["rules"]
+                from_feed = body.get('from_feed', True) and feed_match.get('sets_played_count')
+                state = (manual_scoring.state_from_match(feed_match, rules, MAX_SETS) if from_feed
+                         else manual_scoring.new_state(rules, server=side if side in (1, 2) else 1))
+                if body.get('status') in ('warmup', 'live'):
+                    state["status"] = body['status']
+                state["feed_lock"] = bool(body.get('lock'))
+                state["preset"] = body.get('preset') if body.get('preset') in manual_scoring.PRESETS else ''
         elif state is None:
             return jsonify({"error": "Manual scoring is not active for this match - start it first."}), 409
-        elif action not in ('point', 'undo', 'server', 'games', 'rules', 'resync'):
-            return jsonify({"error": f"Unknown action '{action}'."}), 400
         else:
-            if action == 'resync' or (action in ('point', 'games') and manager.feed_is_newer(match_id)):
+            if action == 'resync' or (action in scoring_actions and manager.feed_is_newer(match_id)):
                 # TennisTicker has moved on since the last manual action: carry on from its score
-                state = manual_scoring.state_from_match(feed_match, state["rules"], MAX_SETS)
+                fresh = manual_scoring.state_from_match(feed_match, state["rules"], MAX_SETS)
+                for key in ("log", "started_at", "feed_lock"):
+                    if key in state:
+                        fresh[key] = state[key]
+                state = fresh
             if action == 'point':
-                manual_scoring.point(state, side)
+                manual_scoring.point(state, side, str(body.get('kind') or 'normal'))
+            elif action == 'ace':
+                manual_scoring.ace(state)
+            elif action == 'fault':
+                manual_scoring.fault(state)
+            elif action == 'penalty':
+                manual_scoring.penalty(state, side)
             elif action == 'undo':
                 manual_scoring.undo(state)
             elif action == 'server':
@@ -2213,15 +2242,45 @@ def api_manual_score(match_id):
             elif action == 'games':
                 manual_scoring.adjust_games(state, side, 1 if int(body.get('delta') or 1) > 0 else -1)
             elif action == 'rules':
-                manual_scoring.set_rules(state, body.get('rules') or {})
+                rules = (manual_scoring.rules_for_preset(body['preset']) if body.get('preset') in manual_scoring.PRESETS
+                         else body.get('rules') or {})
+                manual_scoring.set_rules(state, rules)
+                state["preset"] = body.get('preset') if body.get('preset') in manual_scoring.PRESETS else ''
+            elif action == 'status':
+                manual_scoring.set_status(state, str(body.get('status') or ''))
+            elif action == 'end':
+                manual_scoring.end_match(state, side, str(body.get('reason') or ''))
+            elif action == 'lock':
+                state["feed_lock"] = bool(body.get('locked'))
+            elif action != 'resync':
+                return jsonify({"error": f"Unknown action '{action}'."}), 400
 
         state["updated_at"] = time.time()
         manager.save_manual_score(match_id, state, active=True)
-        if action in ('start', 'point', 'undo', 'games', 'resync'):
+        if action in ('start', 'undo', 'resync', 'end') + scoring_actions:
             manager.record_history(manual_scoring.apply_to_match(feed_match, state, MAX_SETS))
 
     manager.broadcast_matches([match_id])
     return jsonify(manual_score_response(match_id))
+
+
+@app.route('/api/v1/manual/presets', methods=['GET'])
+def api_manual_presets():
+    """Scoring formats offered on the scoring page."""
+    return jsonify({k: {"label": v["label"], "rules": manual_scoring.rules_for_preset(k)}
+                    for k, v in manual_scoring.PRESETS.items()})
+
+
+@app.route('/score')
+def score_page():
+    """Courtside scoring (phone / iPad): pick a match, set it live, score every point."""
+    response = make_response(render_template(
+        'score.html',
+        match_id=(request.args.get('match') or '').strip(),
+        presets={k: v["label"] for k, v in manual_scoring.PRESETS.items()},
+    ))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
 
 
 # ====================================================================
@@ -3487,7 +3546,25 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW, bios=None):
         # Point score within the current game ('00', '15', '30', '40', 'AD') – live only
         "p1_points": str(match.get("game1") or "") if is_live else "",
         "p2_points": str(match.get("game2") or "") if is_live else "",
+
+        # Courtside scoring detail (blank unless the match is scored on /score)
+        "serve_number": str(match.get("serve_number") or "") if is_live else "",
+        "point_flag": str(match.get("point_flag") or "") if is_live else "",
+        "result_note": str(match.get("result_note") or ""),
     }
+    manual_stats = match.get("manual_stats") or {}
+    for side in (1, 2):
+        s = manual_stats.get(side) or manual_stats.get(str(side)) or {}
+        pct = lambda v: f"{v}%" if v is not None else ""
+        row[f"p{side}_aces"] = str(s.get("aces", "")) if s else ""
+        row[f"p{side}_double_faults"] = str(s.get("double_faults", "")) if s else ""
+        row[f"p{side}_first_serve_pct"] = pct(s.get("first_serve_pct")) if s else ""
+        row[f"p{side}_first_serve_won_pct"] = pct(s.get("first_serve_won_pct")) if s else ""
+        row[f"p{side}_second_serve_won_pct"] = pct(s.get("second_serve_won_pct")) if s else ""
+        row[f"p{side}_winners"] = str(s.get("winners", "")) if s else ""
+        row[f"p{side}_unforced_errors"] = str(s.get("unforced_errors", "")) if s else ""
+        row[f"p{side}_break_points"] = f"{s['break_points_won']}/{s['break_points']}" if s else ""
+        row[f"p{side}_points_won"] = str(s.get("points_won", "")) if s else ""
 
     def as_int(v):
         try:
