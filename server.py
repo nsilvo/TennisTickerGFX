@@ -256,17 +256,22 @@ class XMLCacheManager:
                 career TEXT,
                 notes TEXT,
                 lta_url TEXT,
+                lta_stats TEXT,
                 updated_at INTEGER
             );
         """)
-        # Migration for DBs created before lta_url existed
-        try:
-            cursor.execute("ALTER TABLE player_bios ADD COLUMN lta_url TEXT")
-        except Exception:
+        # Migrations for DBs created before lta_url / lta_stats existed. Commit first:
+        # on Postgres a failed ALTER's rollback would otherwise undo the CREATEs above.
+        self.conn.commit()
+        for column in ("lta_url", "lta_stats"):
             try:
-                self.conn.rollback()
+                cursor.execute(f"ALTER TABLE player_bios ADD COLUMN {column} TEXT")
+                self.conn.commit()
             except Exception:
-                pass
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
 
         # Score progression history, one row per score change (for commentary graphs)
         cursor.execute("""
@@ -337,7 +342,9 @@ class XMLCacheManager:
     # Player bios (commentator spotter data entered via /players)
     # ----------------------------------------------------------------
 
-    PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url")
+    # lta_stats is JSON scraped from the LTA profile (records, form, titles)
+    PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
+                         "lta_stats")
 
     def get_player_bio(self, player_key):
         """Return the saved bio dict for a player key, or None."""
@@ -1961,15 +1968,39 @@ def lta_tournament_players(session, tournament_id):
     return list(players.values())
 
 
+def _lta_titles(fragment):
+    """Titles/Finals markup -> [{"year", "result", "tournament", "event"}], newest year first."""
+    titles, current_year = [], ""
+    for year, medal, tname, ename in re.findall(
+            r'list__label--loud">(\d{4})</dt>|title="(Winner|Finalist)".*?nav-link__value">([^<]+)</span>'
+            r'.*?text--muted">.*?nav-link__value">([^<]+)</span>', fragment, re.S):
+        if year:
+            current_year = year
+            continue
+        titles.append({"year": current_year, "result": medal,
+                       "tournament": _lta_text(tname), "event": _lta_text(ename)})
+    return titles
+
+
+def _lta_record(text):
+    """'396 / 175 (571)' -> [396, 175], or None."""
+    m = re.match(r'\s*(\d+)\s*/\s*(\d+)', text or '')
+    return [int(m.group(1)), int(m.group(2))] if m else None
+
+
 def lta_player_details(session, tournament_id, player_no):
-    """Scrape the tournament player page + global profile into bio-ready facts."""
+    """
+    Scrape the tournament player page + global profile into bio-ready facts.
+    "stats" is the structured part stored as JSON in player_bios.lta_stats.
+    """
     page = session.get(f"{LTA_BASE}/sport/player.aspx",
                        params={"id": tournament_id, "player": player_no}, timeout=30).text
     events = [_lta_text(e) for e in re.findall(
         r'event\.aspx\?id=[^"]*" class="nav-link text--link-white"><span class="nav-link__value">([^<]+)', page)]
     guid = re.search(r'/player-profile/([0-9A-Fa-f-]{36})', page)
-    details = {"events": events, "lta_url": "", "member_no": "", "full_name": "",
-               "year_of_birth": "", "county": "", "wtn": {}, "career": "", "this_year": "", "titles": []}
+    stats = {"member_no": "", "year_of_birth": "", "county": "", "wtn": {}, "records": {},
+             "form": [], "titles": [], "events": events, "scraped": datetime.now().strftime("%Y-%m-%d")}
+    details = {"lta_url": "", "full_name": "", "stats": stats}
     if not guid:
         return details
 
@@ -1981,69 +2012,74 @@ def lta_player_details(session, tournament_id, player_no):
         name = re.search(r'nav-link__value">([^<]+)', head.group(1))
         member = re.search(r'media__title-aside">\((\d+)\)', head.group(1))
         details["full_name"] = _lta_text(name.group(1)) if name else ""
-        details["member_no"] = member.group(1) if member else ""
+        stats["member_no"] = member.group(1) if member else ""
     yob = re.search(r'Year of Birth:\s*(\d{4})', prof)
-    details["year_of_birth"] = yob.group(1) if yob else ""
+    stats["year_of_birth"] = yob.group(1) if yob else ""
     county = re.search(r'title="Play County".*?nav-link__value">([^<]+)', prof, re.S)
-    details["county"] = _lta_text(county.group(1)) if county else ""
+    stats["county"] = _lta_text(county.group(1)) if county else ""
     for kind, value in re.findall(
             r'tag-duo__title">(Singles|Doubles)</span>\s*<span class="tag-duo__value">(.*?)</span>', prof, re.S):
-        details["wtn"][kind] = _lta_text(value)
+        stats["wtn"][kind.lower()] = _lta_text(value)
 
-    totals = prof.split('id="tabStatsTotal"', 1)
-    if len(totals) == 2:
-        block = totals[1].split('id="tabStats', 1)[0]
+    # Win-loss per discipline: {"total": {"career": [w, l], "year": [w, l]}, "singles": …}
+    for tab in ("Total", "Singles", "Doubles", "Mixed"):
+        parts = prof.split(f'id="tabStats{tab}"', 1)
+        if len(parts) < 2:
+            continue
+        block = parts[1].split('id="tabStats', 1)[0]
+        record = {}
         for label, value in re.findall(
                 r'list__label">(Career|This year)</dt>.*?list__value-start">(.*?)</span>', block, re.S):
-            key = "career" if label == "Career" else "this_year"
-            details[key] = _lta_text(value)
+            parsed = _lta_record(_lta_text(value))
+            if parsed:
+                record["career" if label == "Career" else "year"] = parsed
+        if record:
+            stats["records"][tab.lower()] = record
+        if tab == "Total":
+            # Recent results, oldest first
+            stats["form"] = re.findall(r'match__status"[^>]*>([WL])<', block)
 
-    titles = prof.split('Titles/Finals', 1)
-    if len(titles) == 2:
-        current_year = ""
-        for year, medal, tname, ename in re.findall(
-                r'list__label--loud">(\d{4})</dt>|title="(Winner|Finalist)".*?nav-link__value">([^<]+)</span>'
-                r'.*?text--muted">.*?nav-link__value">([^<]+)</span>', titles[1], re.S):
-            if year:
-                current_year = year
-                continue
-            details["titles"].append({"year": current_year, "result": medal,
-                                      "tournament": _lta_text(tname), "event": _lta_text(ename)})
+    # Full titles list (the profile itself only shows recent years)
+    try:
+        full = session.get(f"{details['lta_url']}/PersonHome/TitlesFinals",
+                           headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30).text
+        stats["titles"] = _lta_titles(full)
+    except Exception:
+        stats["titles"] = []
+    if not stats["titles"] and 'Titles/Finals' in prof:
+        stats["titles"] = _lta_titles(prof.split('Titles/Finals', 1)[1])
     return details
 
 
-def _lta_win_loss(text):
-    """'396 / 175 (571)' -> '396-175 (69%)'."""
-    m = re.match(r'(\d+)\s*/\s*(\d+)', text or '')
-    if not m:
-        return ""
-    won, lost = int(m.group(1)), int(m.group(2))
-    pct = f" ({round(100 * won / (won + lost))}%)" if won + lost else ""
-    return f"{won}-{lost}{pct}"
+def _pct(record):
+    won, lost = record
+    return round(100 * won / (won + lost)) if won + lost else 0
+
+
+def _wl(record):
+    return f"{record[0]}-{record[1]} ({_pct(record)}%)"
 
 
 def lta_bio_fields(player, details):
     """Map scraped LTA facts onto player_bios columns."""
+    stats = details["stats"]
+    total = stats["records"].get("total", {})
     career_parts = []
-    if details["wtn"]:
-        career_parts.append("WTN " + " / ".join(f"{k} {v}" for k, v in details["wtn"].items()))
-    if details["career"]:
-        career_parts.append(f"Career W-L {_lta_win_loss(details['career'])}")
-    if details["this_year"]:
-        career_parts.append(f"{datetime.now().year} W-L {_lta_win_loss(details['this_year'])}")
-    wins = [t for t in details["titles"] if t["result"] == "Winner"]
-    finals = [t for t in details["titles"] if t["result"] == "Finalist"]
+    if stats["wtn"]:
+        career_parts.append("WTN " + " / ".join(f"{k.title()} {v}" for k, v in stats["wtn"].items()))
+    if total.get("career"):
+        career_parts.append(f"Career W-L {_wl(total['career'])}")
+    if total.get("year"):
+        career_parts.append(f"{stats['scraped'][:4]} W-L {_wl(total['year'])}")
+    wins = sum(1 for t in stats["titles"] if t["result"] == "Winner")
     if wins:
-        career_parts.append(f"{len(wins)} recent title(s): " + "; ".join(
-            f"{t['tournament']} {t['event']} ({t['year']})" for t in wins[:3]))
-    if finals:
-        career_parts.append(f"{len(finals)} recent final(s)")
+        career_parts.append(f"{wins} title(s)")
 
     notes_parts = []
-    if details["events"]:
-        notes_parts.append("This event: " + "; ".join(details["events"]))
-    if details["member_no"]:
-        notes_parts.append(f"LTA no. {details['member_no']}")
+    if stats["events"]:
+        notes_parts.append("This event: " + "; ".join(stats["events"]))
+    if stats["member_no"]:
+        notes_parts.append(f"LTA no. {stats['member_no']}")
 
     # Profile names keep casing like "McGill" but are sometimes typed as
     # "aled smith" / "PAUL THOMAS"; the tournament list is consistently cased.
@@ -2053,12 +2089,102 @@ def lta_bio_fields(player, details):
     return {
         "display_name": full_name if well_cased else first_last,
         "country": player["country"],
-        "born": details["year_of_birth"],
-        "hometown": f"{details['county']} (county)" if details["county"] else "",
+        "born": stats["year_of_birth"],
+        "hometown": f"{stats['county']} (county)" if stats["county"] else "",
         "career": " · ".join(career_parts),
         "notes": " · ".join(notes_parts),
         "lta_url": details["lta_url"],
+        "lta_stats": json.dumps(stats, ensure_ascii=False),
     }
+
+
+def parse_lta_stats(bio):
+    """Structured LTA stats saved on a bio, or {}."""
+    try:
+        stats = json.loads((bio or {}).get('lta_stats') or '{}')
+        return stats if isinstance(stats, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def lta_talking_points(stats, name=""):
+    """Commentator-ready sentences from structured LTA stats."""
+    points = []      # performance lines, most newsworthy first
+    background = []  # who/where lines, shown after
+    first = (name or "").split(" ")[0] or "They"
+    season = (stats.get("scraped") or str(datetime.now().year))[:4]
+    records = stats.get("records") or {}
+    total = records.get("total") or {}
+
+    # Partner / events at this tournament
+    for event in stats.get("events") or []:
+        if " with " in event:
+            ev, partner = event.split(" with ", 1)
+            background.append(f"Partnering {partner} in {ev}.")
+
+    yob = stats.get("year_of_birth")
+    if yob and yob.isdigit():
+        age = int(season) - int(yob)
+        background.append(f"Born in {yob}, so {age} this year" +
+                      (f" and playing out of {stats['county']}." if stats.get("county") else "."))
+    elif stats.get("county"):
+        background.append(f"Plays out of {stats['county']}.")
+
+    career, year = total.get("career"), total.get("year")
+    if career and sum(career) >= 5:
+        line = f"Career record of {_wl(career)} across {sum(career)} LTA matches"
+        if year and sum(year) >= 5:
+            diff = _pct(year) - _pct(career)
+            if diff >= 10:
+                line += f" — and flying in {season} at {_wl(year)}"
+            elif diff <= -10:
+                line += f" — but a tougher {season} at {_wl(year)}"
+            else:
+                line += f"; {_wl(year)} in {season}"
+        points.append(line + ".")
+
+    # Specialism: one discipline making up most career matches
+    split = {k: sum((records.get(k) or {}).get("career") or [0, 0]) for k in ("singles", "doubles", "mixed")}
+    played = sum(split.values())
+    if played >= 20:
+        main = max(split, key=split.get)
+        if split[main] / played >= 0.6:
+            rec = records[main]["career"]
+            background.append(f"Primarily a {main} player — {split[main]} of {played} career matches, "
+                          f"winning {_pct(rec)}%.")
+
+    # Current streak from the most recent results
+    form = stats.get("form") or []
+    if form:
+        last = form[-1]
+        streak = len(form) - len("".join(form).rstrip(last))
+        if streak >= 3:
+            points.append(f"{'Won' if last == 'W' else 'Lost'} their last {streak} matches on record.")
+
+    titles = stats.get("titles") or []
+    wins = [t for t in titles if t["result"] == "Winner"]
+    finals = [t for t in titles if t["result"] == "Finalist"]
+    this_season = [t for t in wins if t["year"] == season]
+    if this_season:
+        names = " and ".join(t["tournament"] for t in this_season[:2])
+        lead = "including" if len(this_season) > 2 else "at"
+        points.append(f"{len(this_season)} title{'s' if len(this_season) > 1 else ''} in {season}, {lead} {names}.")
+    if wins or finals:
+        since = min(t["year"] for t in titles if t["year"]) if any(t["year"] for t in titles) else ""
+        parts = [f"{len(wins)} title{'s' if len(wins) != 1 else ''}"] if wins else []
+        if finals:
+            parts.append(f"{len(finals)} runner-up finish{'es' if len(finals) != 1 else ''}")
+        points.append(f"{first}'s LTA record shows {' and '.join(parts)}" + (f" since {since}." if since else "."))
+        repeat = {}
+        for t in wins:
+            repeat[t["tournament"]] = repeat.get(t["tournament"], 0) + 1
+        best = max(repeat.items(), key=lambda kv: kv[1], default=None)
+        if best and best[1] >= 2:
+            times = {2: "twice", 3: "three times", 4: "four times", 5: "five times"}.get(best[1], f"{best[1]} times")
+            points.append(f"Has won {best[0]} {times}.")
+    elif career and sum(career) >= 20:
+        points.append("Still chasing a first LTA title or final.")
+    return points + background
 
 
 def lta_candidate_keys(player):
@@ -2091,7 +2217,8 @@ def match_lta_player_key(player, known_keys):
 # lta_surname are optional: when present, rows are matched to the live feed's
 # player names on import instead of trusting player_key.
 BIO_CSV_COLUMNS = ("player_key", "lta_first", "lta_surname",
-                   "display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url")
+                   "display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
+                   "lta_stats")
 
 
 def scrape_lta_tournament(tournament_id, progress=None):
@@ -2169,6 +2296,9 @@ def merge_bio_rows(rows, overwrite=False):
             fields = {c: incoming[c] or existing.get(c) or '' for c in manager.PLAYER_BIO_FIELDS}
         else:
             fields = {c: existing.get(c) or incoming[c] for c in manager.PLAYER_BIO_FIELDS}
+        # Scraped stats are machine data: a newer scrape always refreshes them
+        if incoming['lta_stats']:
+            fields['lta_stats'] = incoming['lta_stats']
         if existing and all((existing.get(c) or '') == fields[c] for c in manager.PLAYER_BIO_FIELDS):
             unchanged += 1
             continue
@@ -2295,6 +2425,7 @@ def api_player_detail(player_name):
         display_name = known['name']
 
     last_completed = next((r for r in results if r['result']), None)
+    lta = parse_lta_stats(bio)
 
     return jsonify({
         "status": "success",
@@ -2307,6 +2438,8 @@ def api_player_detail(player_name):
         "career": bio.get('career') or '',
         "notes": bio.get('notes') or '',
         "lta_url": bio.get('lta_url') or '',
+        "lta": lta,
+        "talking_points": lta_talking_points(lta, display_name),
         "tournament_wins": wins,
         "tournament_losses": losses,
         "tournament_record": f"{wins}-{losses}",
@@ -2368,6 +2501,8 @@ def players_page():
                 error = "Database not ready yet - try again shortly."
             else:
                 fields = {col: request.form.get(col, '') for col in manager.PLAYER_BIO_FIELDS}
+                # Scraped LTA stats aren't editable in the form; keep them
+                fields['lta_stats'] = (manager.get_player_bio(player_key) or {}).get('lta_stats') or ''
                 if not fields.get('display_name'):
                     fields['display_name'] = request.form.get('player_key', '').strip()
                 if manager.save_player_bio(player_key, fields):

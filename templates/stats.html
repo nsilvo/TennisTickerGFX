@@ -193,6 +193,137 @@ details.data-table summary { cursor: pointer; font-size: 0.72rem; color: var(--m
 details.data-table table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 0.76rem; }
 details.data-table th, details.data-table td { padding: 3px 8px; text-align: left; border-top: 1px solid rgba(255,255,255,0.07); color: var(--muted-text); }
 details.data-table th { color: var(--text-light); font-weight: 600; }
+
+/* ====================================================================
+   Focused-court dashboard. "screen" = fixed 1920x1080 stage scaled to fit
+   the window (commentary monitor); "mobile" = the same panels stacked.
+   ==================================================================== */
+.layout-toggle {
+    margin-left: auto; padding: 4px 12px; border-radius: 999px; cursor: pointer;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted-text); background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft);
+}
+.layout-toggle:hover { color: var(--text-light); border-color: rgba(255,255,255,0.3); }
+
+body.screen-mode { padding: 0; overflow: hidden; height: 100vh; }
+body.screen-mode .nav-bar,
+body.screen-mode .page-head,
+body.screen-mode .container > .hint,
+body.screen-mode #court-tabs,
+body.screen-mode .updated-line,
+body.screen-mode .disclaimer { display: none; }
+body.screen-mode #cards.dash-host {
+    position: fixed; top: 0; left: 0; width: 1920px; height: 1080px;
+    transform-origin: 0 0; padding: 20px 24px; display: block;
+}
+
+.dash { display: flex; flex-direction: column; gap: 14px; }
+body.screen-mode .dash { height: 100%; }
+.dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.dash-head h2 { margin: 0; color: var(--test-color); font-size: 1.5rem; }
+.dash-head .match-name { margin: 0; font-size: 0.95rem; }
+.court-select {
+    margin-left: auto; padding: 4px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+    color: var(--text-light); background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft);
+}
+.dash-head .layout-toggle { margin-left: 0; }
+.dash-meta { font-size: 0.78rem; color: var(--muted-text); white-space: nowrap; }
+.mobile-mode .court-select { display: none; }
+
+.dash-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+body.screen-mode .dash-grid { grid-template-columns: 780px 1fr; flex: 1; min-height: 0; }
+.dash-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; }
+body.screen-mode .dash-col > .card { padding: 16px 18px; }
+body.screen-mode .score-card .player-name { font-size: 1.5rem; }
+body.screen-mode .score-card .set-cell { font-size: 1.25rem; min-width: 40px; }
+body.screen-mode .score-card .game-cell { font-size: 2rem; min-width: 70px; }
+body.screen-mode .score-card .score-table td { padding: 12px 6px; }
+body.screen-mode .chart-svg { max-height: 130px; }
+body.screen-mode .lta-links { display: none; }
+body.screen-mode details.data-table { display: none; }
+.section-label {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted-text); margin-bottom: 8px; display: flex; justify-content: space-between; gap: 10px;
+}
+
+/* Tale of the tape: butterfly bars, side 1 grows left, side 2 grows right */
+.tape-headline { font-size: 0.95rem; margin-bottom: 10px; }
+.tape-headline strong { color: var(--test-color); }
+.tape-names { display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; font-weight: 700; font-size: 0.92rem; margin-bottom: 6px; }
+.tape-names span:first-child { text-align: right; }
+.tape-names .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin: 0 6px; vertical-align: 0; }
+.tape-row { display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; padding: 3px 0; }
+.tape-label { text-align: center; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-text); }
+.tape-side { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tape-side.s1 { flex-direction: row-reverse; }
+.tape-val { font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 64px; }
+.tape-side.s1 .tape-val { text-align: right; }
+.tape-val.lead { color: #fff; }
+.tape-val:not(.lead) { color: var(--muted-text); }
+.tape-track { flex: 1; height: 8px; display: flex; }
+.tape-side.s1 .tape-track { justify-content: flex-end; }
+.tape-bar { height: 100%; min-width: 2px; }
+.tape-side.s1 .tape-bar { background: #3b8ae0; border-radius: 4px 0 0 4px; }
+.tape-side.s2 .tape-bar { background: #e06a35; border-radius: 0 4px 4px 0; }
+
+/* Player panels: one column per side, partners stacked */
+.player-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-height: 0; }
+body.screen-mode .player-grid { flex: 1; }
+.player-col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.ppanel {
+    background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1;
+    border-top: 3px solid var(--side-color);
+}
+body.screen-mode .ppanel { display: grid; grid-template-columns: 250px 1fr; grid-template-rows: auto 1fr; gap: 6px 16px; }
+body.screen-mode .ppanel-top { grid-column: 1 / -1; }
+body.screen-mode .ppanel-stats { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+body.screen-mode .wl-line { grid-template-columns: 40px 1fr; }
+body.screen-mode .wl-line .val { grid-column: 1 / -1; text-align: left; margin-top: -4px; font-size: 0.74rem; color: var(--muted-text); }
+.ppanel-top, .ppanel-stats { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ppanel-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.ppanel-name { font-weight: 800; font-size: 1.08rem; }
+.ppanel-sub { font-size: 0.78rem; color: var(--muted-text); }
+.ppanel-sub a { color: #8ab4ff; text-decoration: none; }
+.ppanel-row { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.chip {
+    display: inline-flex; gap: 5px; align-items: baseline; padding: 2px 8px; border-radius: 6px;
+    font-size: 0.74rem; color: var(--muted-text); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+}
+.chip strong { color: var(--text-light); font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+.wl-line { display: grid; grid-template-columns: 58px 1fr 104px; gap: 8px; align-items: center; font-size: 0.78rem; }
+.wl-line .lbl { color: var(--muted-text); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.wl-line .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.wl-track { height: 8px; border-radius: 4px; background: rgba(255,75,92,0.35); display: flex; overflow: hidden; }
+.wl-track span { background: var(--success-color); border-right: 2px solid #12121c; }
+.form-dots { display: inline-flex; gap: 4px; align-items: center; }
+.form-dot {
+    width: 20px; height: 20px; border-radius: 50%; font-size: 0.66rem; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center; color: #0b0b11;
+}
+.form-dot.W { background: var(--success-color); }
+.form-dot.L { background: var(--error-color); }
+.mini-label { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text); margin-right: 6px; }
+.titles-svg { display: block; overflow: visible; }
+.talking { margin: 0; padding-left: 18px; font-size: 0.86rem; line-height: 1.38; }
+body.screen-mode .talking { font-size: 0.84rem; }
+.talking li { margin-bottom: 3px; }
+.talking li::marker { color: var(--test-color); }
+body.screen-mode .talking-wrap {
+    flex: 1; min-height: 0; overflow: hidden;
+    -webkit-mask-image: linear-gradient(180deg, #000 85%, transparent);
+    mask-image: linear-gradient(180deg, #000 85%, transparent);
+}
+.staff-notes { font-size: 0.8rem; color: var(--muted-text); font-style: italic; }
+.ppanel-empty { font-size: 0.84rem; color: var(--muted-text); }
+.ppanel-empty a { color: #8ab4ff; }
+
+@media (max-width: 700px){
+    .player-grid { grid-template-columns: 1fr; }
+    .tape-row, .tape-names { grid-template-columns: 1fr 96px 1fr; }
+    .tape-val { min-width: 44px; font-size: 0.8rem; }
+    .dash-head h2 { font-size: 1.2rem; }
+}
 </style>
 </head>
 <body>
@@ -776,28 +907,243 @@ function oneLineScore(m){
     return parseSets(m).map(([a, b]) => `${a}-${b}`).join(' ');
 }
 
-function courtCardHTML(court){
-    const ms = matchesForCourt(court);
-    const current = pickCurrent(ms);
-    const title = FOCUS_COURT
-        ? esc(court)
-        : `<a href="/stats?court=${encodeURIComponent(court)}">${esc(court)}</a>`;
+// ====================================================================
+// Focused-court dashboard: "screen" (1920x1080 stage scaled to the window)
+// or "mobile" (stacked). ?layout=screen|mobile forces one; the toggle button
+// remembers the choice per device.
+// ====================================================================
+const LAYOUT_KEY = 'commentaryLayout';
+const SIDE_COLORS = { 1: '#3b8ae0', 2: '#e06a35' };
+let connOk = false;
+let lastUpdatedText = '–';
+let renderedMode = null;
 
-    if (!current){
-        return `<div class="card">
-            <div class="card-head"><h2>🎾 ${title}</h2></div>
-            <div class="empty-card">No match data for this court yet.</div>
-        </div>`;
+function storedLayout(){
+    try { return localStorage.getItem(LAYOUT_KEY) || ''; } catch(e){ return ''; }
+}
+
+function layoutMode(){
+    if (!FOCUS_COURT) return 'flow';
+    const forced = (new URLSearchParams(location.search).get('layout') || storedLayout()).toLowerCase();
+    if (forced === 'screen' || forced === 'mobile') return forced;
+    return window.innerWidth >= 1024 && window.innerWidth >= window.innerHeight ? 'screen' : 'mobile';
+}
+
+function setLayout(mode){
+    try { localStorage.setItem(LAYOUT_KEY, mode); } catch(e){}
+    const url = new URL(location.href);
+    url.searchParams.delete('layout');
+    history.replaceState(null, '', url);
+    render();
+}
+
+function fitStage(){
+    const host = document.getElementById('cards');
+    if (!document.body.classList.contains('screen-mode')){ host.style.transform = ''; return; }
+    const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    const x = (window.innerWidth - 1920 * s) / 2, y = (window.innerHeight - 1080 * s) / 2;
+    host.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+}
+
+function allCourts(){
+    const found = [...new Set(allMatches.map(m => String(m.court || '').trim()).filter(Boolean))];
+    return [...PINNED, ...found.filter(c => !PINNED.includes(c)).sort()];
+}
+
+function sidePlayers(m, who){
+    return sideEntries(who === 1 ? (m.player1_full || m.player1) : (m.player2_full || m.player2));
+}
+function ltaOf(p){ const d = playerCache.get(p.key); return (d && d.lta) || {}; }
+function recordOf(lta, disc, span){ return ((lta.records || {})[disc] || {})[span] || null; }
+function pctOf(r){ return r && (r[0] + r[1]) ? Math.round(r[0] / (r[0] + r[1]) * 100) : null; }
+function seasonOf(lta){ return parseInt(String(lta.scraped || new Date().getFullYear()).slice(0, 4), 10); }
+function avg(vals){ vals = vals.filter(v => v != null && !Number.isNaN(v)); return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null; }
+function sumRecords(players, span){
+    let w = 0, l = 0, any = false;
+    players.forEach(p => { const r = recordOf(ltaOf(p), 'total', span); if (r){ w += r[0]; l += r[1]; any = true; } });
+    return any ? [w, l] : null;
+}
+
+// Per-side aggregates for the tale of the tape
+function sideMetrics(m, who){
+    const players = sidePlayers(m, who);
+    const doubles = players.length > 1 || isPadel(m);
+    const wtnKind = doubles ? 'doubles' : 'singles';
+    const ages = players.map(p => { const l = ltaOf(p); return l.year_of_birth ? seasonOf(l) - parseInt(l.year_of_birth, 10) : null; });
+    const first = playerCache.get((players[0] || {}).key);
+    return {
+        players, wtnKind,
+        wtn: avg(players.map(p => parseFloat((ltaOf(p).wtn || {})[wtnKind]))),
+        career: sumRecords(players, 'career'),
+        year: sumRecords(players, 'year'),
+        titles: players.some(p => ltaOf(p).titles)
+            ? players.reduce((n, p) => n + (ltaOf(p).titles || []).filter(t => t.result === 'Winner').length, 0) : null,
+        age: avg(ages),
+        event: first && (first.tournament_wins + first.tournament_losses) > 0 ? [first.tournament_wins, first.tournament_losses] : null
+    };
+}
+
+function tapeRow(label, v1, v2, opts){
+    // opts: fmt(value) -> text, size(value) -> 0..1 bar length, lowerBetter
+    if (v1 == null && v2 == null) return '';
+    const size = v => v == null ? 0 : Math.max(0, Math.min(1, opts.size(v)));
+    const better = (a, b) => a != null && (b == null || (opts.lowerBetter ? a < b : opts.score(a) > opts.score(b)));
+    const side = (cls, v, lead) => `<div class="tape-side ${cls}">
+        <span class="tape-val${lead ? ' lead' : ''}">${v == null ? '–' : esc(opts.fmt(v))}</span>
+        <span class="tape-track"><span class="tape-bar" style="width:${(size(v) * 100).toFixed(1)}%"></span></span>
+    </div>`;
+    return `<div class="tape-row">${side('s1', v1, better(v1, v2))}<span class="tape-label">${esc(label)}</span>${side('s2', v2, better(v2, v1))}</div>`;
+}
+
+function taleOfTapeHTML(m){
+    const a = sideMetrics(m, 1), b = sideMetrics(m, 2);
+    const n1 = fullSideName(m.player1_full || m.player1) || 'Side 1';
+    const n2 = fullSideName(m.player2_full || m.player2) || 'Side 2';
+    const season = seasonOf(ltaOf(a.players[0] || b.players[0] || {}));
+    const pctScore = r => pctOf(r) ?? -1;
+    const rows = [
+        tapeRow(`WTN ${a.wtnKind}`, a.wtn, b.wtn,
+            { fmt: v => v.toFixed(1), size: v => (40 - v) / 39, lowerBetter: true }),
+        tapeRow('This event W-L', a.event, b.event,
+            { fmt: r => `${r[0]}-${r[1]}`, size: r => (r[0] + r[1]) ? r[0] / (r[0] + r[1]) : 0, score: r => r[0] - r[1] }),
+        tapeRow(`${season} win %`, a.year, b.year,
+            { fmt: r => `${pctOf(r)}% · ${r[0]}-${r[1]}`, size: r => (pctOf(r) || 0) / 100, score: pctScore }),
+        tapeRow('Career win %', a.career, b.career,
+            { fmt: r => `${pctOf(r)}% · ${r[0]}-${r[1]}`, size: r => (pctOf(r) || 0) / 100, score: pctScore }),
+        tapeRow('LTA titles', a.titles, b.titles,
+            { fmt: v => String(v), size: v => v / Math.max(a.titles || 0, b.titles || 0, 1), score: v => v }),
+        tapeRow('Matches played', a.career && a.career[0] + a.career[1], b.career && b.career[0] + b.career[1],
+            { fmt: v => String(v), size: v => v / Math.max(a.career ? a.career[0] + a.career[1] : 0, b.career ? b.career[0] + b.career[1] : 0, 1), score: v => v }),
+        tapeRow(a.players.length > 1 ? 'Average age' : 'Age', a.age, b.age,
+            { fmt: v => String(Math.round(v)), size: v => v / 80, score: () => 0 })
+    ].join('');
+
+    let headline = '';
+    if (a.wtn != null && b.wtn != null && Math.abs(a.wtn - b.wtn) >= 0.5){
+        const fav = a.wtn < b.wtn ? n1 : n2;
+        const plural = (a.wtn < b.wtn ? a : b).players.length > 1 ? 'are' : 'is';
+        headline = `On ${a.wtnKind} ratings <strong>${esc(fav)}</strong> ${plural} the favourite${plural === 'are' ? 's' : ''} `
+            + `(WTN ${Math.min(a.wtn, b.wtn).toFixed(1)} v ${Math.max(a.wtn, b.wtn).toFixed(1)}).`;
+    } else if (a.wtn != null && b.wtn != null){
+        headline = `Evenly matched on ${a.wtnKind} ratings (WTN ${a.wtn.toFixed(1)} v ${b.wtn.toFixed(1)}).`;
+    }
+    const p1 = pctOf(a.year), p2 = pctOf(b.year);
+    if (p1 != null && p2 != null && Math.abs(p1 - p2) >= 10){
+        headline += ` ${esc(p1 > p2 ? n1 : n2)} in better ${season} form: ${Math.max(p1, p2)}% v ${Math.min(p1, p2)}% won.`;
     }
 
-    const live = statusBucket(current) === 'LIVE';
-    const padel = isPadel(current);
+    return `<div class="card">
+        <div class="section-label"><span>Tale of the tape</span><span>LTA data${a.players.length > 1 ? ' · pair combined' : ''} · lower WTN = stronger</span></div>
+        ${headline ? `<div class="tape-headline">${headline}</div>` : ''}
+        <div class="tape-names"><span>${esc(n1)}<span class="swatch" style="background:${SIDE_COLORS[1]}"></span></span><span></span>
+            <span><span class="swatch" style="background:${SIDE_COLORS[2]}"></span>${esc(n2)}</span></div>
+        ${rows || '<div class="hint">No LTA data for these players yet - import it on the Players page.</div>'}
+    </div>`;
+}
+
+// Titles won per season, last six seasons (single series; hover a bar for detail)
+function titlesChartSVG(lta){
+    const titles = lta.titles || [];
+    if (!titles.length) return '';
+    const season = seasonOf(lta);
+    const years = Array.from({ length: 6 }, (_, i) => season - 5 + i);
+    const won = y => titles.filter(t => t.result === 'Winner' && +t.year === y).length;
+    const finals = y => titles.filter(t => t.result === 'Finalist' && +t.year === y).length;
+    const max = Math.max(1, ...years.map(won));
+    const W = 22, G = 6, H = 30;
+    let g = '';
+    years.forEach((y, i) => {
+        const x = i * (W + G), n = won(y), h = n ? Math.max(3, n / max * H) : 0;
+        g += `<g><title>${y}: ${n} title${n === 1 ? '' : 's'}, ${finals(y)} final${finals(y) === 1 ? '' : 's'}</title>
+            <rect x="${x}" y="0" width="${W}" height="${H + 26}" fill="transparent"/>
+            ${n ? `<path d="M${x},${12 + H} v-${h - 4} q0,-4 4,-4 h${W - 8} q4,0 4,4 v${h - 4} z" fill="#d4a72c"/>` : ''}
+            <line x1="${x}" y1="${12 + H}" x2="${x + W}" y2="${12 + H}" stroke="rgba(255,255,255,0.18)"/>
+            ${n ? `<text x="${x + W / 2}" y="${12 + H - h - 3}" text-anchor="middle" font-size="10" font-weight="700" fill="#f5f5f7">${n}</text>` : ''}
+            <text x="${x + W / 2}" y="${H + 24}" text-anchor="middle" font-size="9" fill="#a0a0b0">'${String(y).slice(2)}</text></g>`;
+    });
+    return `<svg class="titles-svg" width="${years.length * (W + G) - G}" height="${H + 26}" role="img"
+        aria-label="Titles won per season">${g}</svg>`;
+}
+
+function wlLineHTML(label, r){
+    if (!r || !(r[0] + r[1])) return '';
+    const pct = pctOf(r);
+    return `<div class="wl-line"><span class="lbl">${esc(label)}</span>
+        <span class="wl-track" title="${r[0]} won, ${r[1]} lost"><span style="width:${pct}%"></span></span>
+        <span class="val">${r[0]}-${r[1]} · ${pct}%</span></div>`;
+}
+
+// Strip the auto-generated "This event: … · LTA no. …" text the importer puts
+// in notes - the panel already shows that - leaving what staff wrote.
+function staffNotes(d){
+    return String(d.notes || '').split(' · ')
+        .filter(s => !(d.lta && Object.keys(d.lta).length && /^(This event:|LTA no\.)/.test(s.trim())))
+        .join(' · ').trim();
+}
+
+function playerPanelHTML(p, who){
+    const d = playerCache.get(p.key);
+    const style = `style="--side-color:${SIDE_COLORS[who]}"`;
+    if (!d){
+        return `<div class="ppanel" ${style}><div class="ppanel-head"><span class="ppanel-name">${esc(p.name)}</span></div>
+            <div class="ppanel-empty">No bio or LTA data yet - <a href="/players" target="_blank">add on the Players page</a>.</div></div>`;
+    }
+    const lta = d.lta || {};
+    const season = seasonOf(lta);
+    const sub = [];
+    if (lta.year_of_birth) sub.push(`Age ${season - parseInt(lta.year_of_birth, 10)}`);
+    else if (d.born) sub.push(esc(d.born));
+    if (lta.county) sub.push(esc(lta.county));
+    else if (d.hometown) sub.push(esc(d.hometown));
+    if (d.plays) sub.push(esc(d.plays));
+    if (d.tournament_wins + d.tournament_losses > 0) sub.push(`This event ${esc(d.tournament_record)}`);
+    if (d.lta_url) sub.push(`<a href="${esc(d.lta_url)}" target="_blank" rel="noopener">LTA ↗</a>`);
+
+    const titles = lta.titles || [];
+    const nWon = titles.filter(t => t.result === 'Winner').length;
+    const nFinal = titles.length - nWon;
+    const chips = [];
+    if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
+    if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
+    if (titles.length) chips.push(`<span class="chip">Titles <strong>${nWon}</strong></span><span class="chip">Finals <strong>${nFinal}</strong></span>`);
+
+    const form = (lta.form || []).slice(-5);
+    const formHTML = form.length
+        ? `<span><span class="mini-label">Form</span><span class="form-dots" title="Oldest to newest">${form.map(r => `<span class="form-dot ${r === 'W' ? 'W' : 'L'}">${r}</span>`).join('')}</span></span>` : '';
+    const chart = titlesChartSVG(lta);
+
+    const points = (d.talking_points || []).slice();
+    if (!Object.keys(lta).length && d.career) points.push(d.career);
+    const notes = staffNotes(d);
+
+    if (!Object.keys(lta).length && !points.length) points.push('No LTA data imported for this player yet.');
+    return `<div class="ppanel" ${style}>
+        <div class="ppanel-top">
+            <div class="ppanel-head"><span class="ppanel-name">${esc(d.name || p.name)}</span>
+                ${d.country ? `<span class="ppanel-sub">${esc(d.country)}</span>` : ''}</div>
+            ${sub.length ? `<div class="ppanel-sub">${sub.join(' · ')}</div>` : ''}
+        </div>
+        <div class="ppanel-stats">
+            ${chips.length ? `<div class="ppanel-row" style="gap:6px">${chips.join('')}</div>` : ''}
+            ${wlLineHTML('Career', recordOf(lta, 'total', 'career'))}
+            ${wlLineHTML(String(season), recordOf(lta, 'total', 'year'))}
+            ${formHTML}
+            ${chart ? `<div><div class="mini-label">Titles per season</div>${chart}</div>` : ''}
+        </div>
+        ${points.length || notes ? `<div class="talking-wrap">
+            ${points.length ? `<ul class="talking">${points.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+            ${notes ? `<div class="staff-notes">📝 ${esc(notes)}</div>` : ''}
+        </div>` : ''}
+    </div>`;
+}
+
+// Up next + last result for a court (shared by overview cards and the dashboard)
+function courtExtrasHTML(ms, current){
+    let extras = '';
     const upNext = ms.filter(m => m !== current && statusBucket(m) === 'UPCOMING')
         .sort((a,b) => String(a.schedtime||'').localeCompare(String(b.schedtime||'')))[0];
     const lastDone = ms.filter(m => m !== current && statusBucket(m) === 'COMPLETED')
         .sort((a,b) => (b.timestamp||0) - (a.timestamp||0))[0];
-
-    let extras = '';
     if (upNext){
         ensurePlayerData(matchPlayerEntries(upNext));
         const n1 = fullSideName(upNext.player1_full || upNext.player1) || 'TBC';
@@ -818,6 +1164,76 @@ function courtCardHTML(court){
         extras += `<div class="extra-line"><span class="extra-label">Last result</span>
             ${line}${oneLineScore(lastDone) ? ` · ${esc(oneLineScore(lastDone))}` : ''}</div>`;
     }
+    return extras;
+}
+
+function focusDashboardHTML(court, mode){
+    const ms = matchesForCourt(court);
+    const current = pickCurrent(ms);
+    const tabs = `<select class="court-select" aria-label="Court"><option value="">All courts</option>${allCourts().map(c =>
+        `<option value="${esc(c)}"${c === court ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+    const toggle = `<button type="button" class="layout-toggle" data-layout="${mode === 'screen' ? 'mobile' : 'screen'}">${mode === 'screen' ? '📱 Mobile view' : '🖥 Screen view'}</button>`;
+    const meta = `<span class="dash-meta"><span id="dash-conn-dot" class="conn-dot${connOk ? ' online' : ''}"></span><span id="dash-conn">${connOk ? 'Live' : 'Disconnected'}</span> · <span id="dash-updated">${esc(lastUpdatedText)}</span></span>`;
+
+    if (!current){
+        return `<div class="dash"><div class="dash-head"><h2>🎾 ${esc(court)}</h2>${meta}${tabs}${toggle}</div>
+            <div class="card"><div class="empty-card">No match data for this court yet.</div></div></div>`;
+    }
+
+    const live = statusBucket(current) === 'LIVE';
+    const padel = isPadel(current);
+    ensurePlayerData(matchPlayerEntries(current));
+    const eventLine = [current.tname, current.matchname].filter(Boolean).map(esc).join(' · ');
+    const charts = chartsHTML(current);
+    const extras = courtExtrasHTML(ms, current) + ltaLinksHTML(current);
+
+    return `<div class="dash">
+        <div class="dash-head">
+            <h2>🎾 ${esc(court)}</h2>
+            <div class="badges"><span class="sport-badge">${padel ? '🥎 Padel' : '🎾 Tennis'}</span>${badgeHTML(current)}</div>
+            <span class="match-name">${eventLine}</span>
+            ${meta}${tabs}${toggle}
+        </div>
+        <div class="dash-grid">
+            <div class="dash-col">
+                <div class="card score-card">
+                    <table class="score-table">${playerRowHTML(current, 1, live)}${playerRowHTML(current, 2, live)}</table>
+                    ${predictorHTML(current)}
+                    ${derivedStatsHTML(current)}
+                </div>
+                ${charts ? `<div class="card">${charts}</div>` : ''}
+                ${extras ? `<div class="card">${extras}</div>` : ''}
+            </div>
+            <div class="dash-col">
+                ${taleOfTapeHTML(current)}
+                <div class="player-grid">
+                    <div class="player-col">${sidePlayers(current, 1).map(p => playerPanelHTML(p, 1)).join('')}</div>
+                    <div class="player-col">${sidePlayers(current, 2).map(p => playerPanelHTML(p, 2)).join('')}</div>
+                </div>
+            </div>
+        </div>
+        <div class="disclaimer">Win predictor is an estimate from the live score (Markov model). Player data from LTA Competitions.</div>
+    </div>`;
+}
+
+function courtCardHTML(court){
+    const ms = matchesForCourt(court);
+    const current = pickCurrent(ms);
+    const title = FOCUS_COURT
+        ? esc(court)
+        : `<a href="/stats?court=${encodeURIComponent(court)}">${esc(court)}</a>`;
+
+    if (!current){
+        return `<div class="card">
+            <div class="card-head"><h2>🎾 ${title}</h2></div>
+            <div class="empty-card">No match data for this court yet.</div>
+        </div>`;
+    }
+
+    const live = statusBucket(current) === 'LIVE';
+    const padel = isPadel(current);
+
+    let extras = courtExtrasHTML(ms, current);
     extras += playerInfoHTML(current);
     extras += ltaLinksHTML(current);
 
@@ -845,34 +1261,69 @@ function courtCardHTML(court){
 
 function render(){
     syncHistory();
-    const found = [...new Set(allMatches.map(m => String(m.court || '').trim()).filter(Boolean))];
-    const courts = [...PINNED, ...found.filter(c => !PINNED.includes(c)).sort()];
+    const courts = allCourts();
+    const mode = layoutMode();
+    const cardsEl = document.getElementById('cards');
+    renderedMode = mode;
+    document.body.classList.toggle('screen-mode', mode === 'screen');
+    document.body.classList.toggle('mobile-mode', mode === 'mobile');
+
+    if (FOCUS_COURT){
+        cardsEl.className = 'dash-host';
+        cardsEl.innerHTML = focusDashboardHTML(FOCUS_COURT, mode);
+        fitStage();
+    }
 
     const tabs = document.getElementById('court-tabs');
     tabs.innerHTML = `<a class="court-tab${FOCUS_COURT ? '' : ' active'}" href="/stats">All courts</a>`
         + courts.map(c =>
             `<a class="court-tab${c === FOCUS_COURT ? ' active' : ''}" href="/stats?court=${encodeURIComponent(c)}">${esc(c)}</a>`
         ).join('');
+    if (FOCUS_COURT) return;
 
-    const shown = FOCUS_COURT ? [FOCUS_COURT] : courts;
-    const cardsEl = document.getElementById('cards');
-    cardsEl.className = FOCUS_COURT ? 'cards focused' : 'cards';
-
-    if (!shown.length){
+    cardsEl.className = 'cards';
+    cardsEl.style.transform = '';
+    if (!courts.length){
         cardsEl.innerHTML = '<div class="card"><div class="empty-card">No matches in the feed yet - this page fills in automatically once scores arrive.</div></div>';
         return;
     }
-    cardsEl.innerHTML = shown.map(courtCardHTML).join('');
+    cardsEl.innerHTML = courts.map(courtCardHTML).join('');
 }
 
 function setUpdated(ts){
-    document.getElementById('last-updated').textContent = ts || new Date().toLocaleTimeString();
+    lastUpdatedText = ts || new Date().toLocaleTimeString();
+    document.getElementById('last-updated').textContent = lastUpdatedText;
+    const dash = document.getElementById('dash-updated');
+    if (dash) dash.textContent = lastUpdatedText;
 }
 
 function setConnected(ok){
+    connOk = ok;
     document.getElementById('conn-dot').classList.toggle('online', ok);
     document.getElementById('conn-text').textContent = ok ? 'Live' : 'Disconnected';
+    const dot = document.getElementById('dash-conn-dot');
+    if (dot){
+        dot.classList.toggle('online', ok);
+        document.getElementById('dash-conn').textContent = ok ? 'Live' : 'Disconnected';
+    }
 }
+
+// Re-scale the stage on resize; re-render if auto mode flips screen <-> mobile
+window.addEventListener('resize', () => {
+    const mode = layoutMode();
+    if (mode !== renderedMode){ renderedMode = mode; render(); }
+    else fitStage();
+});
+document.getElementById('cards').addEventListener('click', e => {
+    const btn = e.target.closest('.layout-toggle');
+    if (btn) setLayout(btn.dataset.layout);
+});
+document.getElementById('cards').addEventListener('change', e => {
+    if (!e.target.matches('.court-select')) return;
+    const url = new URL('/stats', location.origin);
+    if (e.target.value) url.searchParams.set('court', e.target.value);
+    location.href = url;
+});
 
 async function loadSnapshot(){
     try {
