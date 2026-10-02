@@ -72,7 +72,7 @@ h2 { font-size: 1rem; }
 .court-tab:hover { color: var(--text-light); border-color: rgba(255,255,255,0.3); }
 .court-tab.active { color: var(--test-color); border-color: rgba(255,193,7,0.6); background: rgba(255,193,7,0.14); }
 
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 20px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 20px; }
 .cards.focused { grid-template-columns: minmax(0, 760px); justify-content: center; }
 
 .card {
@@ -102,7 +102,7 @@ h2 { font-size: 1rem; }
 
 .score-table { width: 100%; border-collapse: collapse; }
 .score-table td { padding: 8px 6px; border-top: 1px solid rgba(255,255,255,0.07); vertical-align: middle; }
-.player-cell { width: 100%; }
+.player-cell { width: 100%; max-width: 0; } /* lets long names ellipsis instead of widening the table */
 .player-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .serve-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: transparent; }
 .serve-dot.on { background: var(--serve-color); box-shadow: 0 0 6px var(--serve-color); }
@@ -158,7 +158,7 @@ h2 { font-size: 1rem; }
     font-size: 0.66rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--muted-text); display: block; margin-bottom: 2px;
 }
-.lta-links a { color: #8ab4ff; text-decoration: none; margin-right: 10px; white-space: nowrap; }
+.lta-links a { color: #8ab4ff; text-decoration: none; margin-right: 10px; white-space: nowrap; display: inline-block; }
 .lta-links a:hover { text-decoration: underline; }
 .player-bio { padding: 4px 0; font-size: 0.84rem; color: var(--text-light); }
 .player-bio strong { font-weight: 700; }
@@ -228,18 +228,18 @@ body.screen-mode .dash { height: 100%; }
 }
 .dash-head .layout-toggle { margin-left: 0; }
 .dash-meta { font-size: 0.78rem; color: var(--muted-text); white-space: nowrap; }
-.mobile-mode .court-select { display: none; }
+body.mobile-mode #court-tabs, body.mobile-mode .container > .hint, body.mobile-mode .disclaimer { display: none; }
+body.mobile-mode .court-select { margin-left: 0; }
 
-.dash-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-body.screen-mode .dash-grid { grid-template-columns: 780px 1fr; flex: 1; min-height: 0; }
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+body.screen-mode .dash-grid { grid-template-columns: 780px minmax(0, 1fr); flex: 1; min-height: 0; }
 .dash-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; }
 body.screen-mode .dash-col > .card { padding: 16px 18px; }
 body.screen-mode .score-card .player-name { font-size: 1.5rem; }
 body.screen-mode .score-card .set-cell { font-size: 1.25rem; min-width: 40px; }
 body.screen-mode .score-card .game-cell { font-size: 2rem; min-width: 70px; }
 body.screen-mode .score-card .score-table td { padding: 12px 6px; }
-body.screen-mode .chart-svg { max-height: 130px; }
-body.screen-mode .lta-links { display: none; }
+body.screen-mode .chart-svg { max-height: 150px; }
 body.screen-mode details.data-table { display: none; }
 .section-label {
     font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
@@ -249,10 +249,10 @@ body.screen-mode details.data-table { display: none; }
 /* Tale of the tape: butterfly bars, side 1 grows left, side 2 grows right */
 .tape-headline { font-size: 0.95rem; margin-bottom: 10px; }
 .tape-headline strong { color: var(--test-color); }
-.tape-names { display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; font-weight: 700; font-size: 0.92rem; margin-bottom: 6px; }
+.tape-names { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); gap: 10px; font-weight: 700; font-size: 0.92rem; margin-bottom: 6px; }
 .tape-names span:first-child { text-align: right; }
 .tape-names .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin: 0 6px; vertical-align: 0; }
-.tape-row { display: grid; grid-template-columns: 1fr 150px 1fr; gap: 10px; align-items: center; padding: 3px 0; }
+.tape-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); gap: 10px; align-items: center; padding: 3px 0; }
 .tape-label { text-align: center; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-text); }
 .tape-side { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tape-side.s1 { flex-direction: row-reverse; }
@@ -267,19 +267,21 @@ body.screen-mode details.data-table { display: none; }
 .tape-side.s2 .tape-bar { background: #e06a35; border-radius: 0 4px 4px 0; }
 
 /* Player panels: one column per side, partners stacked */
-.player-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-height: 0; }
+.player-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
 body.screen-mode .player-grid { flex: 1; }
 .player-col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .ppanel {
     background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
-    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
     border-top: 3px solid var(--side-color);
 }
+body.screen-mode .ppanel { flex: 1; min-height: 0; }
 body.screen-mode .ppanel { display: grid; grid-template-columns: 250px 1fr; grid-template-rows: auto 1fr; gap: 6px 16px; }
 body.screen-mode .ppanel-top { grid-column: 1 / -1; }
 body.screen-mode .ppanel-stats { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-body.screen-mode .wl-line { grid-template-columns: 40px 1fr; }
-body.screen-mode .wl-line .val { grid-column: 1 / -1; text-align: left; margin-top: -4px; font-size: 0.74rem; color: var(--muted-text); }
+body.screen-mode .wl-line { grid-template-columns: 1fr auto; gap: 2px 8px; }
+body.screen-mode .wl-line .wl-track { grid-column: 1 / -1; grid-row: 2; }
+body.screen-mode .wl-line .val { font-size: 0.74rem; }
 .ppanel-top, .ppanel-stats { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .ppanel-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .ppanel-name { font-weight: 800; font-size: 1.08rem; }
@@ -320,7 +322,10 @@ body.screen-mode .talking-wrap {
 
 @media (max-width: 700px){
     .player-grid { grid-template-columns: 1fr; }
-    .tape-row, .tape-names { grid-template-columns: 1fr 96px 1fr; }
+    .player-grid { grid-template-columns: minmax(0, 1fr); }
+    .tape-row, .tape-names { grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr); gap: 6px; }
+    .tape-track { display: none; }
+    .tape-label { font-size: 0.6rem; }
     .tape-val { min-width: 44px; font-size: 0.8rem; }
     .dash-head h2 { font-size: 1.2rem; }
 }
@@ -835,8 +840,8 @@ function chartsHTML(m){
 // LTA player lookup: split doubles pairs and strip "(GBR)" style suffixes.
 function sideEntries(raw){
     return String(raw || '').split('/').map(part => {
-        const cm = part.match(/\(([A-Za-z]{2,3})\)/);
-        const name = part.replace(/\([A-Za-z]{2,3}\)/g, '').replace(/\s+/g, ' ').trim();
+        const cm = part.match(/\(((?:[A-Za-z.&]{2,4})?)\)/);
+        const name = part.replace(/\((?:[A-Za-z.&]{2,4})?\)/g, '').replace(/\s+/g, ' ').trim();
         return name && name.toUpperCase() !== 'TBC'
             ? { name, key: name.toUpperCase(), country: cm ? cm[1].toUpperCase() : '' }
             : null;
@@ -1105,14 +1110,14 @@ function playerPanelHTML(p, who){
     const chips = [];
     if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
     if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
-    if (titles.length) chips.push(`<span class="chip">Titles <strong>${nWon}</strong></span><span class="chip">Finals <strong>${nFinal}</strong></span>`);
 
     const form = (lta.form || []).slice(-5);
     const formHTML = form.length
         ? `<span><span class="mini-label">Form</span><span class="form-dots" title="Oldest to newest">${form.map(r => `<span class="form-dot ${r === 'W' ? 'W' : 'L'}">${r}</span>`).join('')}</span></span>` : '';
     const chart = titlesChartSVG(lta);
 
-    const points = (d.talking_points || []).slice();
+    // The W-L bars already show a plain career record; keep it only when it says more
+    const points = (d.talking_points || []).filter(t => !(t.startsWith('Career record of') && !t.includes('—')));
     if (!Object.keys(lta).length && d.career) points.push(d.career);
     const notes = staffNotes(d);
 
@@ -1128,7 +1133,7 @@ function playerPanelHTML(p, who){
             ${wlLineHTML('Career', recordOf(lta, 'total', 'career'))}
             ${wlLineHTML(String(season), recordOf(lta, 'total', 'year'))}
             ${formHTML}
-            ${chart ? `<div><div class="mini-label">Titles per season</div>${chart}</div>` : ''}
+            ${chart ? `<div><div class="mini-label">Titles · ${nWon} won, ${nFinal} final${nFinal === 1 ? '' : 's'}</div>${chart}</div>` : ''}
         </div>
         ${points.length || notes ? `<div class="talking-wrap">
             ${points.length ? `<ul class="talking">${points.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
@@ -1185,7 +1190,8 @@ function focusDashboardHTML(court, mode){
     ensurePlayerData(matchPlayerEntries(current));
     const eventLine = [current.tname, current.matchname].filter(Boolean).map(esc).join(' · ');
     const charts = chartsHTML(current);
-    const extras = courtExtrasHTML(ms, current) + ltaLinksHTML(current);
+    // Each player panel carries its own LTA link, so no separate lookup row here
+    const extras = courtExtrasHTML(ms, current);
 
     return `<div class="dash">
         <div class="dash-head">

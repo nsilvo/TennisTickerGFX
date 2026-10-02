@@ -39,6 +39,9 @@ DB_NAME = os.getenv("SQLITE_DB_PATH", "casparcg_match_cache.db")
 
 SCRAPE_INTERVAL = int(os.getenv("SCRAPE_INTERVAL", "5"))
 CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '13')
+# A feed can carry matches from several tournaments; each match has its own <tournid>.
+# When non-empty, only matches with these tournids are shown anywhere (set on /config).
+MATCH_TOURNID_FILTER = [t.strip() for t in os.getenv("MATCH_TOURNID_FILTER", "").split(",") if t.strip()]
 ENABLE_SCRAPER = os.getenv("ENABLE_SCRAPER", "true").strip().lower() in ("1", "true", "yes", "on")
 SERVER_PORT = int(os.getenv("PORT", "5000"))
 
@@ -915,15 +918,20 @@ class XMLCacheManager:
 
         return updates_made, changed_match_ids
 
-    def get_latest_data(self, court_number=None):
+    def get_latest_data(self, court_number=None, all_tournaments=False):
         """
         Retrieves all match data from the cache (cached in-process between writes)
         and filters set columns for output. Optionally filters by court number.
+        Matches outside the /config tournament filter are dropped unless
+        all_tournaments is set.
         """
         with self.db_lock:
             if self._latest_cache is None:
                 self._latest_cache = self._load_all_matches()
             matches_list = self._latest_cache
+
+        if not all_tournaments:
+            matches_list = filter_match_tournaments(matches_list)
 
         if court_number:
             # Case-insensitive substring match, mirroring the old SQL LIKE %court_number% behaviour
@@ -995,9 +1003,12 @@ class XMLCacheManager:
 # ====================================================================
 def load_persisted_settings(mgr):
     """Apply admin settings saved in the DB (they override env defaults)."""
-    global CURRENT_TOURNAMENT_ID, TT_USERID, TT_CONTRACT
+    global CURRENT_TOURNAMENT_ID, TT_USERID, TT_CONTRACT, MATCH_TOURNID_FILTER
 
     with state_lock:
+        saved_filter = mgr.get_setting("match_tournid_filter")
+        if saved_filter is not None:
+            MATCH_TOURNID_FILTER = [t for t in saved_filter.split(",") if t]
         saved_tournid = mgr.get_setting("tournament_id")
         if saved_tournid and saved_tournid.isdigit():
             CURRENT_TOURNAMENT_ID = saved_tournid
@@ -1008,7 +1019,8 @@ def load_persisted_settings(mgr):
         if saved_contract:
             TT_CONTRACT = saved_contract
 
-    print(f"Settings loaded: tournament={CURRENT_TOURNAMENT_ID}, userid={TT_USERID}, contract={TT_CONTRACT}")
+    print(f"Settings loaded: tournament={CURRENT_TOURNAMENT_ID}, userid={TT_USERID}, contract={TT_CONTRACT}, "
+          f"match filter={MATCH_TOURNID_FILTER or 'all'}")
 
 
 def continuous_scraper_loop():
@@ -1048,7 +1060,8 @@ def continuous_scraper_loop():
 # ====================================================================
 # Helper: Player identity + tournament records (for /players and player API)
 # ====================================================================
-PLAYER_COUNTRY_RE = re.compile(r'\(([A-Za-z]{2,3})\)')
+# Country/county suffix: "(GBR)", "(S.W)", "(H&W)", or empty "()" as the feed sometimes sends
+PLAYER_COUNTRY_RE = re.compile(r'\(((?:[A-Za-z.&]{2,4})?)\)')
 
 
 def normalize_player_key(name):
@@ -1092,13 +1105,53 @@ def match_score_line(match):
     return " ".join(parts)
 
 
+def filter_match_tournaments(matches):
+    """Keep only matches whose own tournid is in the /config filter (all when unset)."""
+    wanted = set(MATCH_TOURNID_FILTER)
+    if not wanted:
+        return matches
+    return [m for m in matches if str(m.get('tournid') or '').strip() in wanted]
+
+
+def feed_tournaments():
+    """Tournaments present in the cached feed: [{"tournid", "tname", "count"}], plus filtered ids not seen."""
+    found = {}
+    if manager:
+        for m in manager.get_latest_data(all_tournaments=True):
+            tid = str(m.get('tournid') or '').strip()
+            if not tid:
+                continue
+            entry = found.setdefault(tid, {"tournid": tid, "tname": str(m.get('tname') or '').strip(), "count": 0})
+            entry["count"] += 1
+    for tid in MATCH_TOURNID_FILTER:
+        found.setdefault(tid, {"tournid": tid, "tname": "(no matches in feed yet)", "count": 0})
+    return sorted(found.values(), key=lambda t: (-t["count"], t["tournid"]))
+
+
+def update_match_tournid_filter(tournids):
+    """Save the match tournid filter and push the re-filtered list to open dashboards."""
+    global MATCH_TOURNID_FILTER
+    clean = sorted({t.strip() for t in tournids if t and t.strip()})
+    if any(not t.isdigit() for t in clean):
+        return False, "Tournament IDs must be numbers."
+    with state_lock:
+        MATCH_TOURNID_FILTER = clean
+    if manager:
+        manager.save_setting("match_tournid_filter", ",".join(clean))
+        socketio.emit('live_updates', {
+            "timestamp": datetime.now().strftime('%H:%M:%S'),
+            "live_matches": manager.get_latest_data()
+        }, to='dashboard')
+    return True, ("Showing matches from tournament ID " + ", ".join(clean)) if clean else "Showing matches from all tournaments."
+
+
 def all_known_matches():
     """Current cached matches plus archived ones, de-duplicated by matchid."""
     if manager is None:
         return []
     matches = list(manager.get_latest_data())
     seen = {str(m.get('matchid')) for m in matches}
-    for m in manager.get_archived_matches():
+    for m in filter_match_tournaments(manager.get_archived_matches()):
         if str(m.get('matchid')) not in seen:
             matches.append(m)
     return matches
@@ -1686,9 +1739,11 @@ def config_page():
                 message = msg
             else:
                 error = msg
-        else:
-            new_tour_id = request.form.get('tournament_id', '').strip()
-            ok, msg, _status = update_tournament_id(new_tour_id)
+        elif form_name == 'match_tournid_filter':
+            # The feed tournament ID itself is only changeable on /admin
+            picked = request.form.getlist('match_tournid')
+            picked += re.split(r'[\s,]+', request.form.get('match_tournid_extra', ''))
+            ok, msg = update_match_tournid_filter(picked)
             if ok:
                 message = msg
             else:
@@ -1697,6 +1752,7 @@ def config_page():
     with state_lock:
         tour_id = CURRENT_TOURNAMENT_ID
         interval = SCRAPE_INTERVAL
+        match_filter = list(MATCH_TOURNID_FILTER)
 
     stream_config = get_live_stream_config()
     available_courts = get_available_court_numbers()
@@ -1705,6 +1761,8 @@ def config_page():
     response = make_response(render_template(
         'config.html',
         tournament_id=tour_id,
+        match_tournid_filter=match_filter,
+        feed_tournaments=feed_tournaments(),
         scrape_interval=interval,
         stream_config=stream_config,
         available_courts=available_courts,
@@ -1877,7 +1935,9 @@ def get_all_scores(court_number=None):
 
 @app.route('/api/v1/tourid/<new_tour_id>', methods=['POST', 'GET'])
 def set_tournament_id(new_tour_id):
-    """API endpoint to change the CURRENT_TOURNAMENT_ID that the scraper tracks."""
+    """API endpoint to change the CURRENT_TOURNAMENT_ID that the scraper tracks (admin session only)."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"error": "Admin login required - change the feed tournament ID on /admin."}), 403
     ok, msg, status_code = update_tournament_id(new_tour_id)
     if not ok:
         return jsonify({"error": msg}), status_code
@@ -2200,6 +2260,12 @@ def match_lta_player_key(player, known_keys):
     for key in candidates:
         if key in known_keys:
             return key
+    # Compound surnames: the feed may use only the last part ("GIMENO P" for Patricia Gisbert Gimeno)
+    last_part = player["surname"].split()[-1] if player["surname"].split() else ""
+    if last_part and last_part != player["surname"] and player["first"]:
+        short = normalize_player_key(f"{last_part} {player['first'][:1]}")
+        if short in known_keys:
+            return short
     # Truncated first names in the feed, e.g. "ELIZ MALONEY" for Elizabeth Maloney
     surname, first = player["surname"].upper(), player["first"].upper()
     for key in known_keys:
@@ -2275,6 +2341,7 @@ def merge_bio_rows(rows, overwrite=False):
 
     created = updated = unchanged = 0
     skipped = []
+    claimed = {}  # feed key -> row label, so two rows never merge into one bio
     for row in rows:
         surname = (row.get("lta_surname") or "").strip()
         if surname:
@@ -2289,6 +2356,10 @@ def merge_bio_rows(rows, overwrite=False):
         if not key:
             skipped.append(f"{label or 'row'} (no name)")
             continue
+        if key in claimed:
+            skipped.append(f"{label} (same feed name as {claimed[key]})")
+            continue
+        claimed[key] = label
 
         existing = manager.get_player_bio(key) or {}
         incoming = {c: str(row.get(c) or '').strip() for c in manager.PLAYER_BIO_FIELDS}
@@ -2580,11 +2651,32 @@ def court_sort_key(court):
     return (1, 0, str(court))
 
 
-def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
+def _feed_full_name(name):
+    """Feed's "LESA, Giulia" / "KORPANEC DAVIES, Hermione" -> "Giulia Lesa" / "Hermione Korpanec Davies"."""
+    surname, sep, first = name.partition(",")
+    # Only flip real "Surname, First" names, not team entries like "Bath Doubles, 1 (W)"
+    if not sep or not re.fullmatch(r"[^\W\d_][^\d(),]*", first.strip()):
+        return name
+    if surname.isupper():
+        surname = re.sub(r"[A-Za-z]+", lambda w: w.group(0).capitalize(), surname)
+    return f"{first.strip()} {surname.strip()}"
+
+
+def full_side_name(raw, bios):
+    """Side name using each player's saved full name ("William Skidelsky / Aled Smith"), feed name as fallback."""
+    return " / ".join(
+        (bios.get(p["key"]) or {}).get("display_name") or _feed_full_name(p["name"])
+        for p in side_player_entries(raw)
+    )
+
+
+def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW, bios=None):
     """
     Flatten one cached match into a single-level dict of strings,
     ready for direct field mapping in vMix Data Sources.
+    bios ({player_key: bio}) supplies full names; pass it once per request.
     """
+    bios = bios or {}
     status = classify_match_status(match)
     is_live = (status == "LIVE")
 
@@ -2592,6 +2684,13 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
     serve = str(match.get("player2serve") or "")
     p1_serve = "1" if (is_live and serve == "1") else ""
     p2_serve = "1" if (is_live and serve == "2") else ""
+
+    p1_raw = match.get("player1_full") or match.get("player1")
+    p2_raw = match.get("player2_full") or match.get("player2")
+    winner = str(match.get("winner_name") or "")
+    winner_side = (1 if winner and winner in (str(match.get("player1_full") or ""), str(match.get("player1") or ""))
+                   else 2 if winner and winner in (str(match.get("player2_full") or ""), str(match.get("player2") or ""))
+                   else 0)
 
     row = {
         "matchid": str(match.get("matchid") or ""),
@@ -2608,6 +2707,11 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW):
         "p2_surname": str(match.get("player2_surname") or ""),
         "p1_country": str(match.get("player1_country") or ""),
         "p2_country": str(match.get("player2_country") or ""),
+        # Full names from player bios (/players), feed name where none is saved
+        "p1_full_name": full_side_name(p1_raw, bios),
+        "p2_full_name": full_side_name(p2_raw, bios),
+        "winner_full_name": (full_side_name(p1_raw, bios) if winner_side == 1
+                             else full_side_name(p2_raw, bios) if winner_side == 2 else ""),
 
         "p1_serve": p1_serve,
         "p2_serve": p2_serve,
@@ -2723,6 +2827,7 @@ def vmix_datasource():
 
     all_matches = manager.get_latest_data()
     selected = select_match_per_court(all_matches)
+    bios = manager.get_all_player_bios()
 
     rows = []
     for court in sorted(selected.keys(), key=court_sort_key):
@@ -2731,7 +2836,7 @@ def vmix_datasource():
             tokens = [t.lower() for t in re.split(r'\W+', court) if t]
             if court_filter not in tokens and court_filter != court.lower():
                 continue
-        rows.append(vmix_flat_row(selected[court]))
+        rows.append(vmix_flat_row(selected[court], bios=bios))
 
     return jsonify(rows)
 
@@ -2774,10 +2879,11 @@ def vmix_datasource_wide():
 
     row = {"tournament": tournament}
     blank = vmix_blank_row(sets_to_include=VMIX_SETS_WIDE)
+    bios = manager.get_all_player_bios()
 
     for idx in range(1, num_slots + 1):
         if idx <= len(court_order):
-            flat = vmix_flat_row(selected[court_order[idx - 1]], sets_to_include=VMIX_SETS_WIDE)
+            flat = vmix_flat_row(selected[court_order[idx - 1]], sets_to_include=VMIX_SETS_WIDE, bios=bios)
         else:
             flat = blank
         for key, value in flat.items():

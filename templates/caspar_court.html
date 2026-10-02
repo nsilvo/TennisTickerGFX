@@ -147,8 +147,8 @@ function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, ch => ({'&
 // Split a side string into individual players with countries
 function sideEntries(raw){
     return String(raw || '').split('/').map(part => {
-        const cm = part.match(/\(([A-Za-z]{2,3})\)/);
-        const name = part.replace(/\([A-Za-z]{2,3}\)/g, '').replace(/\s+/g, ' ').trim();
+        const cm = part.match(/\(((?:[A-Za-z.&]{2,4})?)\)/);
+        const name = part.replace(/\((?:[A-Za-z.&]{2,4})?\)/g, '').replace(/\s+/g, ' ').trim();
         return name ? { name, key: name.toUpperCase(), country: cm ? cm[1].toUpperCase() : '' } : null;
     }).filter(Boolean);
 }

@@ -295,7 +295,11 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 grid-template-columns: 1fr;
             }
         }
-    </style>
+    .tournid-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 4px; }
+.tournid-option { display: flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; }
+.tournid-option input { width: auto; margin: 0; }
+.tournid-count { color: var(--muted-text, #a0a0b0); font-size: 0.85em; }
+</style>
 </head>
 <body>
 <nav class="nav-bar">
@@ -328,34 +332,40 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 
         <div class="meta-grid">
             <div class="meta-item">
-                <div class="meta-label">Current Tournament ID</div>
+                <div class="meta-label">TennisTicker Feed ID</div>
                 <div class="meta-value">{{ tournament_id }}</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Showing Matches From</div>
+                <div class="meta-value">{{ match_tournid_filter | join(', ') if match_tournid_filter else 'All tournaments' }}</div>
             </div>
             <div class="meta-item">
                 <div class="meta-label">Scrape Interval</div>
                 <div class="meta-value">{{ scrape_interval }}s</div>
             </div>
         </div>
+        <p class="hint">The feed ID is the TennisTicker tournament the scraper pulls from. It can only be changed on the
+           <a href="/admin" style="color:#8ab4ff">Admin page</a>.</p>
 
+        <h2 class="subheading">Match Tournament Filter</h2>
         <form method="post" action="/config">
-            <input type="hidden" name="form_name" value="tournament_settings">
-            <label for="tournament_id">New Tournament ID (numbers only)</label>
-            <input
-                id="tournament_id"
-                name="tournament_id"
-                type="text"
-                inputmode="numeric"
-                pattern="[0-9]+"
-                placeholder="e.g. 7140"
-                required
-                value="{{ tournament_id }}"
-            >
-            <button class="btn" type="submit">Save Tournament ID</button>
+            <input type="hidden" name="form_name" value="match_tournid_filter">
+            <p class="hint">One feed can carry matches from several tournaments; each match has its own tournament ID.
+               Tick the tournaments to show across the dashboards, commentary, overlays and APIs. Leave all unticked to show everything.</p>
+            <div class="tournid-list">
+                {% for t in feed_tournaments %}
+                <label class="tournid-option">
+                    <input type="checkbox" name="match_tournid" value="{{ t.tournid }}" {% if t.tournid in match_tournid_filter %}checked{% endif %}>
+                    <span><strong>{{ t.tournid }}</strong> · {{ t.tname or 'Unnamed tournament' }} <span class="tournid-count">({{ t.count }} match{{ 'es' if t.count != 1 }})</span></span>
+                </label>
+                {% else %}
+                <p class="hint">No matches in the feed yet.</p>
+                {% endfor %}
+            </div>
+            <label for="match_tournid_extra">Or enter IDs not in the feed yet (comma separated)</label>
+            <input id="match_tournid_extra" name="match_tournid_extra" type="text" inputmode="numeric" placeholder="e.g. 7504">
+            <button class="btn" type="submit">Save Filter</button>
         </form>
-
-        <p class="hint">
-            This updates the active feed immediately for the running scraper. Existing cached rows will naturally refresh as new data arrives.
-        </p>
 
         <h2 class="subheading">Live Stream Layout</h2>
         <form method="post" action="/config" id="stream_settings_form">

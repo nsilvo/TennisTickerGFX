@@ -205,7 +205,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <li><strong>GET</strong> /api/v1/scores — all cached matches; response includes tournament_id, last_updated, refresh_interval_seconds, match_count, matches[].</li>
             <li><strong>GET</strong> /api/v1/scores/court/&lt;court_number&gt; — same as above, filtered to one court.</li>
             <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match lookup; 404 if not found.</li>
-            <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — switch the active tournament being scraped (numeric only).</li>
+            <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — switch the TennisTicker feed tournament being scraped (numeric only). Requires an admin login session; returns 403 otherwise. Which match tournaments are <em>shown</em> is set on the Config page.</li>
         </ul>
         <p><strong>Examples:</strong></p>
         <pre><code>curl -s http://localhost:5000/api/v1/scores | jq '.match_count, .last_updated'
@@ -286,7 +286,7 @@ curl -X POST http://localhost:5000/api/v1/tourid/7140 | jq</code></pre>
 
         <p><strong>Tournament switch</strong></p>
         <ul>
-            <li><code>GET/POST /api/v1/tourid/&lt;new_tour_id&gt;</code> returns <code>{ status, message, new_tournament_id }</code>; errors include <code>{ error }</code>.</li>
+            <li><code>GET/POST /api/v1/tourid/&lt;new_tour_id&gt;</code> returns <code>{ status, message, new_tournament_id }</code>; errors include <code>{ error }</code> (403 without an admin session).</li>
         </ul>
     </div>
 
