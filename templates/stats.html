@@ -239,7 +239,7 @@ body.screen-mode .score-card .player-name { font-size: 1.5rem; }
 body.screen-mode .score-card .set-cell { font-size: 1.25rem; min-width: 40px; }
 body.screen-mode .score-card .game-cell { font-size: 2rem; min-width: 70px; }
 body.screen-mode .score-card .score-table td { padding: 12px 6px; }
-body.screen-mode .chart-svg { max-height: 150px; }
+body.screen-mode .chart-svg { max-height: 250px; }
 body.screen-mode details.data-table { display: none; }
 .section-label {
     font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
@@ -268,7 +268,7 @@ body.screen-mode details.data-table { display: none; }
 
 /* Player panels: one column per side, partners stacked */
 .player-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-height: 0; }
-body.screen-mode .player-grid { flex: 1; }
+body.screen-mode .player-grid { flex: 1; grid-template-rows: minmax(0, 1fr); }
 .player-col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .ppanel {
     background: rgba(12,12,20,0.86); border: 1px solid var(--border-soft); border-radius: 12px;
@@ -276,7 +276,7 @@ body.screen-mode .player-grid { flex: 1; }
     border-top: 3px solid var(--side-color);
 }
 body.screen-mode .ppanel { flex: 1; min-height: 0; }
-body.screen-mode .ppanel { display: grid; grid-template-columns: 250px 1fr; grid-template-rows: auto 1fr; gap: 6px 16px; }
+body.screen-mode .ppanel { display: grid; grid-template-columns: 330px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px 24px; }
 body.screen-mode .ppanel-top { grid-column: 1 / -1; }
 body.screen-mode .ppanel-stats { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 body.screen-mode .wl-line { grid-template-columns: 1fr auto; gap: 2px 8px; }
@@ -308,15 +308,49 @@ body.screen-mode .wl-line .val { font-size: 0.74rem; }
 .mini-label { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text); margin-right: 6px; }
 .titles-svg { display: block; overflow: visible; }
 .talking { margin: 0; padding-left: 18px; font-size: 0.86rem; line-height: 1.38; }
-body.screen-mode .talking { font-size: 0.84rem; }
 .talking li { margin-bottom: 3px; }
 .talking li::marker { color: var(--test-color); }
-body.screen-mode .talking-wrap {
-    flex: 1; min-height: 0; overflow: hidden;
-    -webkit-mask-image: linear-gradient(180deg, #000 85%, transparent);
-    mask-image: linear-gradient(180deg, #000 85%, transparent);
-}
 .staff-notes { font-size: 0.8rem; color: var(--muted-text); font-style: italic; }
+
+/* Player info tab: large type, each player's text scrolls on its own */
+.players-view { display: flex; flex-direction: column; gap: 14px; }
+body.screen-mode .players-view { flex: 1; min-height: 0; }
+.dash-col > .card.strip-card, .strip-card { padding: 6px 18px; }
+.strip-card .score-table td { padding: 6px; }
+.strip-card .player-name { font-size: 1.3rem; }
+.strip-card .set-cell { font-size: 1.1rem; min-width: 36px; }
+.strip-card .game-cell { font-size: 1.6rem; }
+.players-view .ppanel { padding: 16px 20px; gap: 10px; }
+.players-view .ppanel-name { font-size: 1.6rem; }
+.players-view .ppanel-sub { font-size: 1rem; }
+.players-view .chip { font-size: 0.85rem; padding: 3px 10px; }
+.players-view .chip strong { font-size: 1.05rem; }
+.players-view .wl-line { font-size: 0.95rem; }
+.players-view .wl-line .val { font-size: 0.95rem; }
+.players-view .wl-line .lbl, .players-view .mini-label { font-size: 0.78rem; }
+.players-view .wl-track { height: 10px; }
+.players-view .form-dot { width: 26px; height: 26px; font-size: 0.8rem; }
+.players-view .talking { font-size: 1.25rem; line-height: 1.5; padding-left: 22px; }
+.players-view .talking li { margin-bottom: 8px; }
+.players-view .staff-notes { font-size: 1.1rem; margin-top: 6px; }
+body.screen-mode .talking-wrap {
+    min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 10px;
+    scrollbar-width: thin; scrollbar-color: rgba(255,193,7,0.55) rgba(255,255,255,0.06);
+}
+.talking-wrap::-webkit-scrollbar { width: 8px; }
+.talking-wrap::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); border-radius: 4px; }
+.talking-wrap::-webkit-scrollbar-thumb { background: rgba(255,193,7,0.55); border-radius: 4px; }
+.talking-wrap:focus-visible { outline: 2px solid rgba(255,193,7,0.6); outline-offset: 4px; border-radius: 6px; }
+
+.view-tabs { display: inline-flex; border: 1px solid var(--border-soft); border-radius: 999px; overflow: hidden; margin-left: auto; }
+.view-tab {
+    padding: 6px 16px; cursor: pointer; border: 0; background: rgba(12,12,20,0.86);
+    font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-text);
+}
+.view-tab + .view-tab { border-left: 1px solid var(--border-soft); }
+.view-tab:hover { color: var(--text-light); }
+.view-tab.active { color: var(--test-color); background: rgba(255,193,7,0.16); }
+.dash-head .court-select { margin-left: 0; }
 .ppanel-empty { font-size: 0.84rem; color: var(--muted-text); }
 .ppanel-empty a { color: #8ab4ff; }
 
@@ -759,7 +793,7 @@ function svgPath(points, step){
 }
 
 function buildChartSVG(kind, states, m){
-    const W = 640, H = 150, L = 34, R = 12, T = 10, B = 20;
+    const W = 640, H = 150, L = 34, R = 40, T = 10, B = 20; // R leaves room for the end-value label
     const iw = W - L - R, ih = H - T - B;
     const n = states.length;
     const x = i => L + (n === 1 ? iw / 2 : i * iw / (n - 1));
@@ -932,6 +966,22 @@ function layoutMode(){
     const forced = (new URLSearchParams(location.search).get('layout') || storedLayout()).toLowerCase();
     if (forced === 'screen' || forced === 'mobile') return forced;
     return window.innerWidth >= 1024 && window.innerWidth >= window.innerHeight ? 'screen' : 'mobile';
+}
+
+// Match stats / Player info tab: ?tab= wins, then the device's last choice
+const TAB_KEY = 'commentaryTab';
+function activeTab(){
+    let tab = new URLSearchParams(location.search).get('tab');
+    if (!tab){ try { tab = localStorage.getItem(TAB_KEY); } catch(e){} }
+    return tab === 'players' ? 'players' : 'match';
+}
+
+function setTab(tab){
+    try { localStorage.setItem(TAB_KEY, tab); } catch(e){}
+    const url = new URL(location.href);
+    url.searchParams.delete('tab');
+    history.replaceState(null, '', url);
+    render();
 }
 
 function setLayout(mode){
@@ -1135,7 +1185,7 @@ function playerPanelHTML(p, who){
             ${formHTML}
             ${chart ? `<div><div class="mini-label">Titles · ${nWon} won, ${nFinal} final${nFinal === 1 ? '' : 's'}</div>${chart}</div>` : ''}
         </div>
-        ${points.length || notes ? `<div class="talking-wrap">
+        ${points.length || notes ? `<div class="talking-wrap" data-key="${esc(p.key)}" tabindex="0">
             ${points.length ? `<ul class="talking">${points.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
             ${notes ? `<div class="staff-notes">📝 ${esc(notes)}</div>` : ''}
         </div>` : ''}
@@ -1193,31 +1243,46 @@ function focusDashboardHTML(court, mode){
     // Each player panel carries its own LTA link, so no separate lookup row here
     const extras = courtExtrasHTML(ms, current);
 
-    return `<div class="dash">
-        <div class="dash-head">
-            <h2>🎾 ${esc(court)}</h2>
-            <div class="badges"><span class="sport-badge">${padel ? '🥎 Padel' : '🎾 Tennis'}</span>${badgeHTML(current)}</div>
-            <span class="match-name">${eventLine}</span>
-            ${meta}${tabs}${toggle}
-        </div>
-        <div class="dash-grid">
+    const tab = activeTab();
+    const tabSwitch = `<div class="view-tabs" role="tablist">
+        <button type="button" role="tab" class="view-tab${tab === 'match' ? ' active' : ''}" data-tab="match" aria-selected="${tab === 'match'}">📊 Match stats</button>
+        <button type="button" role="tab" class="view-tab${tab === 'players' ? ' active' : ''}" data-tab="players" aria-selected="${tab === 'players'}">👤 Player info</button>
+    </div>`;
+    const panels = who => sidePlayers(current, who).map(p => playerPanelHTML(p, who)).join('');
+
+    const body = tab === 'players'
+        ? `<div class="players-view">
+            <div class="card strip-card">
+                <table class="score-table">${playerRowHTML(current, 1, live)}${playerRowHTML(current, 2, live)}</table>
+            </div>
+            <div class="player-grid">
+                <div class="player-col">${panels(1)}</div>
+                <div class="player-col">${panels(2)}</div>
+            </div>
+        </div>`
+        : `<div class="dash-grid">
             <div class="dash-col">
                 <div class="card score-card">
                     <table class="score-table">${playerRowHTML(current, 1, live)}${playerRowHTML(current, 2, live)}</table>
                     ${predictorHTML(current)}
                     ${derivedStatsHTML(current)}
                 </div>
-                ${charts ? `<div class="card">${charts}</div>` : ''}
                 ${extras ? `<div class="card">${extras}</div>` : ''}
             </div>
             <div class="dash-col">
                 ${taleOfTapeHTML(current)}
-                <div class="player-grid">
-                    <div class="player-col">${sidePlayers(current, 1).map(p => playerPanelHTML(p, 1)).join('')}</div>
-                    <div class="player-col">${sidePlayers(current, 2).map(p => playerPanelHTML(p, 2)).join('')}</div>
-                </div>
+                ${charts ? `<div class="card">${charts}</div>` : ''}
             </div>
+        </div>`;
+
+    return `<div class="dash">
+        <div class="dash-head">
+            <h2>🎾 ${esc(court)}</h2>
+            <div class="badges"><span class="sport-badge">${padel ? '🥎 Padel' : '🎾 Tennis'}</span>${badgeHTML(current)}</div>
+            <span class="match-name">${eventLine}</span>
+            ${meta}${tabSwitch}${tabs}${toggle}
         </div>
+        ${body}
         <div class="disclaimer">Win predictor is an estimate from the live score (Markov model). Player data from LTA Competitions.</div>
     </div>`;
 }
@@ -1275,8 +1340,14 @@ function render(){
     document.body.classList.toggle('mobile-mode', mode === 'mobile');
 
     if (FOCUS_COURT){
+        // Live updates re-render every few seconds; keep each player's text where the commentator scrolled it
+        const scrolls = {};
+        cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => { scrolls[el.dataset.key] = el.scrollTop; });
         cardsEl.className = 'dash-host';
         cardsEl.innerHTML = focusDashboardHTML(FOCUS_COURT, mode);
+        cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => {
+            if (scrolls[el.dataset.key]) el.scrollTop = scrolls[el.dataset.key];
+        });
         fitStage();
     }
 
@@ -1323,6 +1394,8 @@ window.addEventListener('resize', () => {
 document.getElementById('cards').addEventListener('click', e => {
     const btn = e.target.closest('.layout-toggle');
     if (btn) setLayout(btn.dataset.layout);
+    const tabBtn = e.target.closest('.view-tab');
+    if (tabBtn) setTab(tabBtn.dataset.tab);
 });
 document.getElementById('cards').addEventListener('change', e => {
     if (!e.target.matches('.court-select')) return;
