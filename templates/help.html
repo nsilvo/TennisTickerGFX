@@ -205,6 +205,9 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <li><strong>GET</strong> /api/v1/scores — all cached matches; response includes tournament_id, last_updated, refresh_interval_seconds, match_count, matches[].</li>
             <li><strong>GET</strong> /api/v1/scores/court/&lt;court_number&gt; — same as above, filtered to one court.</li>
             <li><strong>GET</strong> /api/v1/match/&lt;match_id&gt; — single match lookup; 404 if not found.</li>
+            <li><strong>GET</strong> /api/v1/schedule — order of play for every court (LTA schedule merged with TennisTicker matches); <code>?date=today|upcoming|all|YYYY-MM-DD</code>.</li>
+            <li><strong>GET</strong> /api/v1/schedule/court/&lt;court&gt; — one court's event list as a flat array for vMix (slot, time, event, round, p1_full_name, p2_full_name, status, score, matchid…). Accepts the TennisTicker or LTA court name, or just the number.</li>
+            <li><strong>GET/POST</strong> /api/v1/manual/&lt;match_id&gt; — commentator manual scoring (actions: start, point, undo, server, games, rules, resync, stop). The most recently changed of the feed and manual score is the one shown.</li>
             <li><strong>GET or POST</strong> /api/v1/tourid/&lt;new_tour_id&gt; — switch the TennisTicker feed tournament being scraped (numeric only). Requires an admin login session; returns 403 otherwise. Which match tournaments are <em>shown</em> is set on the Config page.</li>
         </ul>
         <p><strong>Examples:</strong></p>

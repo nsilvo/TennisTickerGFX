@@ -299,6 +299,10 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 .tournid-option { display: flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer; }
 .tournid-option input { width: auto; margin: 0; }
 .tournid-count { color: var(--muted-text, #a0a0b0); font-size: 0.85em; }
+.court-map { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.9rem; }
+.court-map th, .court-map td { text-align: left; padding: 6px 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+.court-map th { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text, #a0a0b0); }
+.court-map input { margin: 0; }
 </style>
 </head>
 <body>
@@ -366,6 +370,46 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <input id="match_tournid_extra" name="match_tournid_extra" type="text" inputmode="numeric" placeholder="e.g. 7504">
             <button class="btn" type="submit">Save Filter</button>
         </form>
+
+        <h2 class="subheading">LTA Order of Play</h2>
+        <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="lta_schedule">
+            <p class="hint">Pre-stages every court's matches from the LTA tournament's Matches pages, refreshed every
+               {{ lta_schedule_info.refresh_min }} minutes. When TennisTicker shows one of these matches live it's linked by
+               player names, and that teaches which LTA court is which TennisTicker court.
+               TennisTicker's own upcoming matches are listed alongside.</p>
+            <label for="lta_url">LTA tournament link</label>
+            <input id="lta_url" name="lta_url" type="text" value="{{ lta_schedule_info.url }}"
+                   placeholder="https://competitions.lta.org.uk/tournament/…/Matches">
+            <button class="btn" type="submit">Save &amp; refresh now</button>
+        </form>
+        {% if lta_schedule_info.error %}<div class="notice error">{{ lta_schedule_info.error }}</div>{% endif %}
+        {% if lta_schedule_info.fetched %}
+        <p class="hint">{{ lta_schedule_info.count }} matches loaded (last refresh {{ lta_schedule_info.fetched }}),
+           {{ lta_schedule_info.linked }} linked to TennisTicker.
+           Per-court lists: <code>/api/v1/schedule/court/&lt;court&gt;</code> · all courts: <code>/api/v1/schedule</code>
+           (<code>?date=today|upcoming|all|YYYY-MM-DD</code>).</p>
+        {% endif %}
+
+        {% if lta_courts %}
+        <h2 class="subheading">LTA Court → TennisTicker Court</h2>
+        <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="lta_court_map">
+            <p class="hint">Learned automatically from linked matches. Type a TennisTicker court to override, or leave blank to use the learned one.</p>
+            <table class="court-map">
+                <tr><th>LTA court</th><th>Learned</th><th>Override</th></tr>
+                {% for c in lta_courts %}
+                <tr>
+                    <td>{{ c.lta }}<input type="hidden" name="lta_court" value="{{ c.lta }}"></td>
+                    <td>{{ c.learned or '—' }}</td>
+                    <td><input type="text" name="tt_court" list="tt-courts" value="{{ c.manual }}" placeholder="{{ c.learned or 'e.g. LTA-OC-1' }}"></td>
+                </tr>
+                {% endfor %}
+            </table>
+            <datalist id="tt-courts">{% for c in tt_courts %}<option value="{{ c }}">{% endfor %}</datalist>
+            <button class="btn" type="submit">Save Court Mapping</button>
+        </form>
+        {% endif %}
 
         <h2 class="subheading">Live Stream Layout</h2>
         <form method="post" action="/config" id="stream_settings_form">

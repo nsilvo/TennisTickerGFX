@@ -33,6 +33,8 @@ import schedule
 
 from flask_socketio import SocketIO, emit, join_room
 
+import manual_scoring
+
 # --- Configuration ---
 XML_BASE_URL = "https://scores.tennisticker.de/scoreboard/livescores.aspx?"
 DB_NAME = os.getenv("SQLITE_DB_PATH", "casparcg_match_cache.db")
@@ -104,6 +106,10 @@ class XMLCacheManager:
         self.db_lock = Lock()
         self._latest_cache = None  # cached result of _load_all_matches(), cleared on any write
         self.create_tables()
+        # Commentator manual scoring: {matchid: state}; active entries override the feed score
+        self.manual_scores = self.load_manual_scores()
+        # When the feed last changed each match's score (in memory; drives feed-vs-manual freshness)
+        self.feed_score_ts = {}
 
     def _connect(self, db_name):
         db_url = os.getenv("DATABASE_URL", "")
@@ -290,7 +296,122 @@ class XMLCacheManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_history_mid ON match_history (matchid, ts);")
 
+        # Commentator manual scoring state (JSON from manual_scoring.py), one row per match
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS manual_scores (
+                matchid TEXT PRIMARY KEY,
+                active INTEGER,
+                state TEXT,
+                updated_at INTEGER
+            );
+        """)
+
         self.conn.commit()
+
+    # ----------------------------------------------------------------
+    # Manual scoring (commentator scores a match point by point)
+    # ----------------------------------------------------------------
+
+    def load_manual_scores(self):
+        """Active manual scoring states keyed by matchid."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT matchid, state FROM manual_scores WHERE active=1")
+                return {str(mid): json.loads(state) for mid, state in cursor.fetchall() if state}
+            except Exception as e:
+                print(f"Error loading manual scores: {e}")
+                return {}
+
+    def save_manual_score(self, matchid, state, active=True):
+        """Persist (or deactivate) a match's manual scoring state."""
+        matchid = str(matchid)
+        if active:
+            self.manual_scores[matchid] = state
+        else:
+            self.manual_scores.pop(matchid, None)
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                ph = "?" if self.param_style == 'sqlite' else "%s"
+                cursor.execute(f"""
+                    INSERT INTO manual_scores (matchid, active, state, updated_at) VALUES ({ph}, {ph}, {ph}, {ph})
+                    ON CONFLICT (matchid) DO UPDATE SET active=excluded.active, state=excluded.state,
+                        updated_at=excluded.updated_at
+                """, (matchid, 1 if active else 0, json.dumps(state), int(time.time())))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error saving manual score for {matchid}: {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+
+    def get_feed_match(self, matchid):
+        """The feed's own row for a match (no manual overlay, no tournament filter), or None."""
+        with self.db_lock:
+            if self._latest_cache is None:
+                self._latest_cache = self._load_all_matches()
+            cache = self._latest_cache
+        return next((m for m in cache if str(m.get('matchid')) == str(matchid)), None)
+
+    def feed_is_newer(self, matchid):
+        """True when the feed changed this match's score after the last manual scoring action."""
+        state = self.manual_scores.get(str(matchid))
+        return bool(state) and self.feed_score_ts.get(str(matchid), 0) > state.get("updated_at", 0)
+
+    def record_history(self, match):
+        """Append one score-progression row (commentary graphs) for a match dict."""
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                self._insert_history(cursor, match.get('matchid'), int(time.time()), match)
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error recording match history for {match.get('matchid')}: {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+
+    def _insert_history(self, cursor, match_id, ts, match):
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        cursor.execute(f"""
+            INSERT INTO match_history
+                (matchid, ts, score, game1, game2, player2serve, matchstatus)
+            VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+        """, (
+            match_id,
+            ts,
+            match_score_line(match),
+            str(match.get('game1') or ''),
+            str(match.get('game2') or ''),
+            int(match.get('player2serve') or 0),
+            str(match.get('matchstatus') or '')
+        ))
+
+    def broadcast_matches(self, changed_match_ids):
+        """Push the full list to dashboards and each changed match to its overlay rooms."""
+        all_latest_data = self.get_latest_data()
+        now_str = datetime.now().strftime('%H:%M:%S')
+
+        # Dashboards (room 'dashboard') get the full list...
+        socketio.emit('live_updates', {
+            "timestamp": now_str,
+            "live_matches": all_latest_data
+        }, to='dashboard')
+
+        # ...while each overlay box only receives its own match/court delta.
+        by_id = {str(m.get('matchid')): m for m in all_latest_data}
+        for mid in changed_match_ids:
+            m = by_id.get(str(mid))
+            if not m:
+                continue
+            payload = {"timestamp": now_str, "match": m}
+            socketio.emit('match_update', payload, to=f"match_{mid}")
+            court = str(m.get('court') or '').strip()
+            if court:
+                socketio.emit('match_update', payload, to=f"court_{court}")
 
     def get_setting(self, key):
         """Return a persisted setting value, or None if not set."""
@@ -643,26 +764,7 @@ class XMLCacheManager:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Parsed {len(all_xml_elems)} matches (live/completed/plan). "
                   f"Updated {updates_made} changed records. Emitting SocketIO updates.")
 
-            all_latest_data = self.get_latest_data()
-            now_str = datetime.now().strftime('%H:%M:%S')
-
-            # Dashboards (room 'dashboard') get the full list...
-            socketio.emit('live_updates', {
-                "timestamp": now_str,
-                "live_matches": all_latest_data
-            }, to='dashboard')
-
-            # ...while each overlay box only receives its own match/court delta.
-            by_id = {str(m.get('matchid')): m for m in all_latest_data}
-            for mid in changed_match_ids:
-                m = by_id.get(str(mid))
-                if not m:
-                    continue
-                payload = {"timestamp": now_str, "match": m}
-                socketio.emit('match_update', payload, to=f"match_{mid}")
-                court = str(m.get('court') or '').strip()
-                if court:
-                    socketio.emit('match_update', payload, to=f"court_{court}")
+            self.broadcast_matches(changed_match_ids)
 
         else:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Parsed {len(all_xml_elems)} matches. No changes detected.")
@@ -867,22 +969,12 @@ class XMLCacheManager:
                     changed_match_ids.append(match_id)
 
                     # Record score progression for live matches (commentary graphs)
-                    if score_changed and not is_plan:
+                    if score_changed:
+                        self.feed_score_ts[str(match_id)] = candidate_data['timestamp']
+                    # (skipped while a commentator is manually scoring - their points are recorded instead)
+                    if score_changed and not is_plan and str(match_id) not in self.manual_scores:
                         try:
-                            ph = "?" if self.param_style == 'sqlite' else "%s"
-                            cursor.execute(f"""
-                                INSERT INTO match_history
-                                    (matchid, ts, score, game1, game2, player2serve, matchstatus)
-                                VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})
-                            """, (
-                                match_id,
-                                candidate_data['timestamp'],
-                                match_score_line(candidate_data),
-                                str(candidate_data.get('game1') or ''),
-                                str(candidate_data.get('game2') or ''),
-                                int(candidate_data.get('player2serve') or 0),
-                                str(candidate_data.get('matchstatus') or '')
-                            ))
+                            self._insert_history(cursor, match_id, candidate_data['timestamp'], candidate_data)
                         except Exception as e:
                             print(f"Error recording match history for {match_id}: {e}")
 
@@ -929,6 +1021,16 @@ class XMLCacheManager:
             if self._latest_cache is None:
                 self._latest_cache = self._load_all_matches()
             matches_list = self._latest_cache
+
+        if self.manual_scores:
+            # A commentator's manual score replaces the feed's score for that match everywhere,
+            # unless TennisTicker has changed the score since the commentator's last action.
+            manual = dict(self.manual_scores)
+            matches_list = [
+                manual_scoring.apply_to_match(m, manual[str(m.get('matchid'))], MAX_SETS)
+                if str(m.get('matchid')) in manual and not self.feed_is_newer(m.get('matchid')) else m
+                for m in matches_list
+            ]
 
         if not all_tournaments:
             matches_list = filter_match_tournaments(matches_list)
@@ -1019,6 +1121,7 @@ def load_persisted_settings(mgr):
         if saved_contract:
             TT_CONTRACT = saved_contract
 
+    load_lta_schedule(mgr)
     print(f"Settings loaded: tournament={CURRENT_TOURNAMENT_ID}, userid={TT_USERID}, contract={TT_CONTRACT}, "
           f"match filter={MATCH_TOURNID_FILTER or 'all'}")
 
@@ -1033,6 +1136,8 @@ def continuous_scraper_loop():
     # Schedule archiving and cleanup at midnight
     schedule.every().day.at("00:00").do(manager.archive_completed_previous_day_matches)
     schedule.every().day.at("00:05").do(manager.cleanup_old_archived_matches)
+    schedule.every(LTA_SCHEDULE_REFRESH_MIN).minutes.do(lta_schedule_tick)
+    lta_schedule_tick()
 
     while True:
         # Run scheduled tasks
@@ -1041,6 +1146,10 @@ def continuous_scraper_loop():
         xml_data = manager.fetch_xml_data()
         if xml_data:
             manager.parse_and_cache_data(xml_data)
+            try:
+                link_lta_schedule()
+            except Exception as e:
+                print(f"Error linking LTA schedule: {e}")
 
         # Emit a simple UTC time heartbeat for the dashboard clock (dashboards only)
         try:
@@ -1739,6 +1848,20 @@ def config_page():
                 message = msg
             else:
                 error = msg
+        elif form_name == 'lta_schedule':
+            ok, msg = refresh_lta_schedule(request.form.get('lta_url', '').strip() or None)
+            if ok:
+                message = msg
+            else:
+                error = msg
+        elif form_name == 'lta_court_map':
+            manual = {}
+            for lta_court, tt_court in zip(request.form.getlist('lta_court'), request.form.getlist('tt_court')):
+                if lta_court.strip() and tt_court.strip():
+                    manual[lta_court.strip()] = tt_court.strip()
+            lta_court_map["manual"] = manual
+            save_lta_schedule()
+            message = f"Saved {len(manual)} court mapping override(s)."
         elif form_name == 'match_tournid_filter':
             # The feed tournament ID itself is only changeable on /admin
             picked = request.form.getlist('match_tournid')
@@ -1763,6 +1886,21 @@ def config_page():
         tournament_id=tour_id,
         match_tournid_filter=match_filter,
         feed_tournaments=feed_tournaments(),
+        lta_schedule_info={
+            "url": lta_schedule.get("url") or "",
+            "count": len(lta_schedule.get("matches") or []),
+            "linked": sum(1 for m in lta_schedule.get("matches") or [] if m.get("tt_matchid")),
+            "fetched": datetime.fromtimestamp(lta_schedule["fetched_at"]).strftime('%Y-%m-%d %H:%M')
+            if lta_schedule.get("fetched_at") else "",
+            "error": lta_schedule.get("error") or "",
+            "refresh_min": LTA_SCHEDULE_REFRESH_MIN,
+        },
+        lta_courts=[
+            {"lta": c, "learned": lta_court_map["learned"].get(c, ""), "manual": lta_court_map["manual"].get(c, "")}
+            for c in sorted({m["lta_court"] for m in lta_schedule.get("matches") or [] if m.get("lta_court")})
+        ],
+        tt_courts=sorted({str(m.get("court")) for m in (manager.get_latest_data(all_tournaments=True) if manager else [])
+                          if m.get("court")}, key=court_sort_key),
         scrape_interval=interval,
         stream_config=stream_config,
         available_courts=available_courts,
@@ -1980,6 +2118,102 @@ def get_match_history_api(match_id):
         "point_count": len(points),
         "points": points
     })
+
+
+# ====================================================================
+# Manual scoring: a commentator scores the match they are watching
+# ====================================================================
+manual_score_lock = Lock()  # serialises read-modify-write of a match's scoring state
+
+
+def manual_score_response(match_id):
+    state = manager.manual_scores.get(str(match_id))
+    match = next((m for m in manager.get_latest_data(all_tournaments=True)
+                  if str(m.get('matchid')) == str(match_id)), None)
+    return {
+        "status": "success",
+        "matchid": str(match_id),
+        "active": state is not None,
+        "state": manual_scoring.summary(state) if state else None,
+        # The feed changed the score after the last manual action, so the feed's score is on air
+        "feed_newer": manager.feed_is_newer(match_id),
+        "match": match,
+    }
+
+
+@app.route('/api/v1/manual/<match_id>', methods=['GET', 'POST'])
+def api_manual_score(match_id):
+    """
+    GET: current manual scoring state. POST JSON {"action": ...}:
+      start  {from_feed: true, rules: {...}}  begin overriding the feed (carry on from its score by default)
+      point  {side: 1|2}                      award a point
+      undo                                    step back one action
+      server {side: 1|2}                      set who is serving
+      games  {side: 1|2, delta: +1|-1}        correct the current set's games
+      rules  {rules: {...}}                   change format (best_of, final_set, golden_point, ...)
+      resync                                  carry on from the feed's current score
+      stop                                    hand the match back to the feed
+    Whichever source changed the score most recently is shown; scoring a point while the
+    feed is ahead first catches up from the feed's score.
+    """
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+    match_id = str(match_id)
+    if request.method == 'GET':
+        return jsonify(manual_score_response(match_id))
+
+    body = request.get_json(silent=True) or {}
+    action = str(body.get('action') or '').lower()
+    try:
+        side = int(body.get('side') or 0)
+    except (TypeError, ValueError):
+        side = 0
+
+    with manual_score_lock:
+        state = manager.manual_scores.get(match_id)
+        feed_match = manager.get_feed_match(match_id)   # the feed's own row, no manual overlay
+        if feed_match is None:
+            return jsonify({"error": f"Match {match_id} is not in the feed."}), 404
+
+        if action == 'stop':
+            if state is not None:
+                manager.save_manual_score(match_id, state, active=False)
+                manager.broadcast_matches([match_id])
+            return jsonify(manual_score_response(match_id))
+
+        if action == 'start':
+            if state is None:
+                padel = 'padel' in f"{feed_match.get('tname') or ''} {feed_match.get('matchname') or ''}".lower()
+                rules = manual_scoring.set_rules(
+                    manual_scoring.new_state(manual_scoring.default_rules(padel)), body.get('rules') or {})["rules"]
+                state = (manual_scoring.state_from_match(feed_match, rules, MAX_SETS)
+                         if body.get('from_feed', True) else manual_scoring.new_state(rules))
+        elif state is None:
+            return jsonify({"error": "Manual scoring is not active for this match - start it first."}), 409
+        elif action not in ('point', 'undo', 'server', 'games', 'rules', 'resync'):
+            return jsonify({"error": f"Unknown action '{action}'."}), 400
+        else:
+            if action == 'resync' or (action in ('point', 'games') and manager.feed_is_newer(match_id)):
+                # TennisTicker has moved on since the last manual action: carry on from its score
+                state = manual_scoring.state_from_match(feed_match, state["rules"], MAX_SETS)
+            if action == 'point':
+                manual_scoring.point(state, side)
+            elif action == 'undo':
+                manual_scoring.undo(state)
+            elif action == 'server':
+                manual_scoring.set_server(state, side)
+            elif action == 'games':
+                manual_scoring.adjust_games(state, side, 1 if int(body.get('delta') or 1) > 0 else -1)
+            elif action == 'rules':
+                manual_scoring.set_rules(state, body.get('rules') or {})
+
+        state["updated_at"] = time.time()
+        manager.save_manual_score(match_id, state, active=True)
+        if action in ('start', 'point', 'undo', 'games', 'resync'):
+            manager.record_history(manual_scoring.apply_to_match(feed_match, state, MAX_SETS))
+
+    manager.broadcast_matches([match_id])
+    return jsonify(manual_score_response(match_id))
 
 
 # ====================================================================
@@ -2450,6 +2684,385 @@ def players_export_csv():
     response.headers['Content-Type'] = 'text/csv; charset=utf-8'
     response.headers['Content-Disposition'] = 'attachment; filename=player_bios.csv'
     return response
+
+
+# ====================================================================
+# LTA order of play: pre-stage every court's matches from the LTA
+# tournament "Matches" pages, linked to TennisTicker matches once live
+# ====================================================================
+LTA_SCHEDULE_REFRESH_MIN = 5
+# {"tournament_id", "url", "fetched_at", "error", "matches": [...]} - persisted in app_settings
+lta_schedule = {"tournament_id": "", "url": "", "fetched_at": 0, "error": "", "matches": []}
+# LTA court name -> TennisTicker court name: "learned" from linked matches, "manual" from /config
+lta_court_map = {"learned": {}, "manual": {}}
+lta_schedule_lock = Lock()
+
+
+def load_lta_schedule(mgr):
+    """Restore the saved schedule and court map (called with the other persisted settings)."""
+    for key, target in (("lta_schedule", lta_schedule), ("lta_court_map", lta_court_map)):
+        raw = mgr.get_setting(key)
+        if raw:
+            try:
+                target.update(json.loads(raw))
+            except ValueError:
+                print(f"Ignoring unreadable setting {key}")
+
+
+def save_lta_schedule():
+    if manager:
+        manager.save_setting("lta_schedule", json.dumps(lta_schedule))
+        manager.save_setting("lta_court_map", json.dumps(lta_court_map))
+
+
+def _split_seed(text):
+    m = re.match(r'^(.*?)\s*\[([^\]]+)\]$', text)
+    return (m.group(1).strip(), m.group(2)) if m else (text.strip(), "")
+
+
+def _parse_lta_match(block, date, time_label, index):
+    titles = [_lta_text(x) for x in re.findall(r'match__header-title-item">(.*?)</li>', block, re.S)]
+    draw = re.search(r'draw\.aspx\?id=[^&"]+&amp;draw=(\d+)', block)
+    aside = re.search(r'match__header-aside-block[^"]*"\s+title="([^"]*)"', block)
+    footer = re.search(r'match__footer-list-item">.*?nav-link__value">([^<]*)<', block, re.S)
+    place = _lta_text(footer.group(1)) if footer else ""
+    lta_court = place if " - " in place else ""
+    duration = ""
+    if aside:
+        dm = re.search(r'Duration:\s*([^|]+)', aside.group(1))
+        duration = dm.group(1).strip() if dm else ""
+
+    body = block.split('match__row-wrapper', 1)[-1].split('match__result', 1)[0]
+    sides, winner = [], 0
+    # Row divs are exactly class="match__row " or "match__row has-won" (not match__row-title…)
+    parts = re.split(r'<div class="match__row( has-won)?\s*">', body)
+    for n, (won_flag, row) in enumerate(zip(parts[1::2], parts[2::2]), start=1):
+        if n > 2:
+            break
+        if won_flag:
+            winner = n
+        players = []
+        for pid, name in re.findall(r'player=(\d+)"[^>]*><span class="nav-link__value">([^<]+)</span>', row):
+            name, seed = _split_seed(_lta_text(name))
+            players.append({"id": pid, "name": name, "seed": seed})
+        sides.append(players)
+    while len(sides) < 2:
+        sides.append([])
+
+    result = block.split('match__result', 1)[-1].split('match__footer', 1)[0]
+    sets = []
+    for cells in re.findall(r'<ul class="points">(.*?)</ul>', result, re.S):
+        nums = [int(x) for x in re.findall(r'points__cell[^"]*">\s*(\d+)', cells)]
+        if len(nums) == 2:
+            sets.append(nums)
+
+    status = "COMPLETED" if winner else "LIVE" if sets else ("UPCOMING" if time_label else "UNSCHEDULED")
+    ids = ["-".join(p["id"] for p in side) or "tbc" for side in sides]
+    return {
+        "key": f"{date}-{draw.group(1) if draw else 'x'}-{ids[0]}-{ids[1]}" + (f"-{index}" if "tbc" in ids else ""),
+        "date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
+        "time": time_label,
+        "event": titles[0] if titles else "",
+        "round": " · ".join(titles[1:]),
+        "lta_court": lta_court,
+        "venue": place.split(" - ")[0] if place else "",
+        "sides": sides,
+        "winner": winner,
+        "sets": sets,
+        "duration": duration,
+        "status": status,
+        "tt_matchid": "",
+    }
+
+
+def lta_matches_in_day(session, tournament_id, date):
+    """Every match on one day of the LTA order of play."""
+    html = session.get(f"{LTA_BASE}/tournament/{tournament_id}/Matches/MatchesInDay", params={"date": date},
+                       headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30).text
+    matches, time_label, index = [], "", 0
+    for chunk in re.split(r'(<h5 class="sticky is-sticky match-group__header">.*?</h5>)', html, flags=re.S):
+        if 'match-group__header' in chunk and chunk.startswith('<h5'):
+            label = _lta_text(chunk)
+            time_label = label if re.match(r'^\d{1,2}:\d{2}$', label) else ""
+            continue
+        for block in chunk.split('<div class="match match--list">')[1:]:
+            index += 1
+            matches.append(_parse_lta_match(block, date, time_label, index))
+    return matches
+
+
+def refresh_lta_schedule(source=None):
+    """Re-pull the whole LTA order of play. Keeps TennisTicker links already made. Returns (ok, message)."""
+    with lta_schedule_lock:
+        if source:
+            found = LTA_TOURNAMENT_RE.search(source)
+            if not found:
+                return False, f"Paste an LTA tournament link, e.g. {LTA_BASE}/tournament/<id>/Matches"
+            if found.group(1).lower() != lta_schedule.get("tournament_id"):
+                lta_schedule.update(matches=[], fetched_at=0)
+                lta_court_map["learned"] = {}
+            lta_schedule.update(tournament_id=found.group(1).lower(), url=source.strip())
+        tid = lta_schedule.get("tournament_id")
+        if not tid:
+            return False, "No LTA tournament set."
+        try:
+            session = lta_session()
+            page = session.get(f"{LTA_BASE}/tournament/{tid}/Matches", timeout=30).text
+            days = sorted(set(re.findall(r'MatchesInDay\?date=(\d{8})', page)))
+            matches = []
+            for day in days:
+                matches.extend(lta_matches_in_day(session, tid, day))
+        except Exception as e:
+            lta_schedule["error"] = f"LTA schedule refresh failed: {e}"
+            save_lta_schedule()
+            return False, lta_schedule["error"]
+
+        links = {m["key"]: m.get("tt_matchid") for m in lta_schedule.get("matches", []) if m.get("tt_matchid")}
+        for m in matches:
+            m["tt_matchid"] = links.get(m["key"], "")
+        lta_schedule.update(matches=matches, fetched_at=int(time.time()), error="")
+        save_lta_schedule()
+    link_lta_schedule()
+    return True, f"Loaded {len(matches)} LTA matches across {len(days)} day(s)."
+
+
+def lta_schedule_tick():
+    """Periodic background refresh (from the scraper loop's scheduler)."""
+    if lta_schedule.get("tournament_id"):
+        Thread(target=refresh_lta_schedule, daemon=True).start()
+
+
+def _feed_name_key(name):
+    """('SURNAME', 'I') from feed names: 'BYRNE J', 'Freya CHRISTIE', 'HARDIE, Ariana'."""
+    name = re.sub(r'\s+', ' ', name).strip()
+    if "," in name:
+        surname, first = [x.strip() for x in name.split(",", 1)]
+        return surname.upper(), first[:1].upper()
+    parts = name.split(" ")
+    if len(parts) > 1 and len(parts[-1]) == 1:
+        return " ".join(parts[:-1]).upper(), parts[-1].upper()
+    caps = [p for p in parts if p.isupper() and len(p) > 1]
+    rest = [p for p in parts if p not in caps]
+    if caps and rest:
+        return " ".join(caps).upper(), rest[0][:1].upper()
+    return " ".join(parts[1:]).upper(), parts[0][:1].upper()
+
+
+def _lta_name_keys(name):
+    """Every ('SURNAME', 'I') an LTA name could appear as: 'Patricia Gisbert Gimeno' -> GIMENO / GISBERT GIMENO."""
+    parts = name.split()
+    if len(parts) < 2:
+        return {(name.upper(), "")}
+    initial = parts[0][:1].upper()
+    return {(" ".join(parts[i:]).upper(), initial) for i in range(1, len(parts))}
+
+
+def _sides_match(feed_side, lta_side):
+    if not feed_side or len(feed_side) != len(lta_side):
+        return False
+    keys = set().union(*(_lta_name_keys(p["name"]) for p in lta_side))
+    return all(_feed_name_key(p["name"]) in keys for p in feed_side)
+
+
+def lta_orientation(fm, entry):
+    """1 if the feed's side 1 is the LTA entry's side 1, 2 if the sides are swapped, 0 if the players differ."""
+    s1 = side_player_entries(fm.get("player1_full") or fm.get("player1"))
+    s2 = side_player_entries(fm.get("player2_full") or fm.get("player2"))
+    if _sides_match(s1, entry["sides"][0]) and _sides_match(s2, entry["sides"][1]):
+        return 1
+    if _sides_match(s1, entry["sides"][1]) and _sides_match(s2, entry["sides"][0]):
+        return 2
+    return 0
+
+
+def link_lta_schedule():
+    """Attach TennisTicker match ids to LTA schedule entries once the feed shows them live."""
+    if manager is None or not lta_schedule.get("matches"):
+        return
+    changed = False
+    today = datetime.now().strftime("%Y-%m-%d")
+    with lta_schedule_lock:
+        linked = {m["tt_matchid"] for m in lta_schedule["matches"] if m.get("tt_matchid")}
+        for fm in manager.get_latest_data():
+            mid = str(fm.get("matchid") or "")
+            tt_court = str(fm.get("court") or "").strip()
+            status = classify_match_status(fm)
+            if mid and mid not in linked and status == "COMPLETED" and tt_court:
+                # Finished before we saw it live: no link, but it still shows which TT court is which LTA court
+                for e in lta_schedule["matches"]:
+                    if e["date"] == today and e["lta_court"] and e["lta_court"] not in lta_court_map["learned"] \
+                            and lta_orientation(fm, e):
+                        lta_court_map["learned"][e["lta_court"]] = tt_court
+                        changed = True
+                        break
+            if not mid or mid in linked or status != "LIVE":
+                continue
+            candidates = [
+                e for e in lta_schedule["matches"]
+                if not e.get("tt_matchid") and e["status"] != "COMPLETED" and lta_orientation(fm, e)
+            ]
+            if not candidates:
+                continue
+            # Prefer today's entry, then the earliest scheduled
+            entry = sorted(candidates, key=lambda e: (e["date"] != today, e["date"], e["time"] or "99:99"))[0]
+            entry["tt_matchid"] = mid
+            linked.add(mid)
+            changed = True
+            if entry["lta_court"] and tt_court:
+                lta_court_map["learned"][entry["lta_court"]] = tt_court
+            print(f"LTA schedule: linked TennisTicker match {mid} to {entry['event']} on {entry['lta_court'] or 'unknown court'}")
+        if changed:
+            save_lta_schedule()
+
+
+def lta_display_court(lta_court):
+    return (lta_court_map["manual"].get(lta_court) or lta_court_map["learned"].get(lta_court) or lta_court)
+
+
+def _lta_side_name(side):
+    return " / ".join(p["name"] for p in side) or "TBC"
+
+
+def schedule_rows():
+    """
+    Merged per-match rows: LTA order of play (linked TennisTicker matches take
+    their live status and score from the feed) plus TennisTicker matches that
+    aren't in the LTA data, including the feed's own upcoming (plan) matches.
+    """
+    feed = {str(m.get("matchid")): m for m in (manager.get_latest_data() if manager else [])}
+    bios = manager.get_all_player_bios() if manager else {}
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows, used = [], set()
+
+    def feed_fields(fm):
+        status = classify_match_status(fm)
+        winner_side = 1 if fm.get("winner") == "1" else 2 if fm.get("winner") == "2" else 0
+        return {
+            "status": status,
+            "score": match_score_line(fm),
+            "p1_points": str(fm.get("game1") or "") if status == "LIVE" else "",
+            "p2_points": str(fm.get("game2") or "") if status == "LIVE" else "",
+            "winner": str(winner_side or ""),
+            "manual": bool(fm.get("manual")),
+        }
+
+    # Feed matches not linked while live (e.g. finished before the schedule was loaded)
+    # are still paired with their LTA entry for display, by players on the same day
+    entries = lta_schedule.get("matches", [])
+    linked_ids = {e.get("tt_matchid") for e in entries if e.get("tt_matchid")}
+    display_link = {}
+    for mid, fm in feed.items():
+        if mid in linked_ids or classify_match_status(fm) == "UPCOMING":
+            continue
+        for e in entries:
+            if not e.get("tt_matchid") and e["key"] not in display_link and e["date"] == today \
+                    and lta_orientation(fm, e):
+                display_link[e["key"]] = mid
+                break
+
+    for e in entries:
+        fm = feed.get(e.get("tt_matchid") or display_link.get(e["key"]) or "")
+        sides = e["sides"]
+        if fm and lta_orientation(fm, e) == 2:
+            sides = [sides[1], sides[0]]   # follow the feed's side order so names line up with its score
+        p1, p2 = _lta_side_name(sides[0]), _lta_side_name(sides[1])
+        row = {
+            "court": str(fm.get("court")) if fm else lta_display_court(e["lta_court"]),
+            "lta_court": e["lta_court"],
+            "date": e["date"],
+            "time": e["time"],
+            "event": e["event"],
+            "round": e["round"],
+            "p1_full_name": p1,
+            "p2_full_name": p2,
+            "p1_seed": "/".join(p["seed"] for p in sides[0] if p["seed"]),
+            "p2_seed": "/".join(p["seed"] for p in sides[1] if p["seed"]),
+            "status": e["status"],
+            "score": " ".join(f"{a}-{b}" for a, b in e["sets"]),
+            "p1_points": "", "p2_points": "",
+            "winner": str(e["winner"] or ""),
+            "manual": False,
+            "matchid": str(fm.get("matchid")) if fm else "",
+            "lta_key": e["key"],
+            "source": "lta",
+        }
+        if fm:
+            used.add(str(fm.get("matchid")))
+            row.update(feed_fields(fm), source="lta+tennisticker")
+        row["winner_full_name"] = p1 if row["winner"] == "1" else p2 if row["winner"] == "2" else ""
+        rows.append(row)
+
+    for mid, fm in feed.items():
+        if mid in used:
+            continue
+        p1 = full_side_name(fm.get("player1_full") or fm.get("player1"), bios)
+        p2 = full_side_name(fm.get("player2_full") or fm.get("player2"), bios)
+        row = {
+            "court": str(fm.get("court") or ""), "lta_court": "", "date": today,
+            "time": str(fm.get("schedtime") or ""), "event": str(fm.get("matchname") or ""), "round": "",
+            "p1_full_name": p1, "p2_full_name": p2, "p1_seed": "", "p2_seed": "",
+            "matchid": mid, "lta_key": "", "source": "tennisticker",
+        }
+        row.update(feed_fields(fm))
+        row["winner_full_name"] = p1 if row["winner"] == "1" else p2 if row["winner"] == "2" else ""
+        rows.append(row)
+
+    order = {"LIVE": 0, "UPCOMING": 1, "UNSCHEDULED": 2, "COMPLETED": 3}
+    rows.sort(key=lambda r: (r["date"], r["time"] or "99:99", order.get(r["status"], 1), r["court"]))
+    return rows
+
+
+def _filter_schedule_date(rows, when):
+    """?date=today (default) | upcoming | all | YYYY-MM-DD."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    when = (when or "today").lower()
+    if when == "all":
+        return rows
+    if when == "upcoming":
+        return [r for r in rows if r["date"] >= today and r["status"] != "COMPLETED"]
+    if when == "today":
+        when = today
+    return [r for r in rows if r["date"] == when]
+
+
+def _court_tokens(name):
+    return {str(int(t)) if t.isdigit() else t for t in re.split(r'\W+', str(name).lower()) if t}
+
+
+@app.route('/api/v1/schedule', methods=['GET'])
+def api_schedule():
+    """Order of play for every court: {"courts": {court: [rows]}}. ?date=today|upcoming|all|YYYY-MM-DD."""
+    rows = _filter_schedule_date(schedule_rows(), request.args.get("date"))
+    courts = {}
+    for r in rows:
+        courts.setdefault(r["court"] or "Unassigned", []).append(r)
+    return jsonify({
+        "status": "success",
+        "lta_tournament": lta_schedule.get("url") or "",
+        "lta_fetched_at": datetime.fromtimestamp(lta_schedule["fetched_at"]).strftime('%Y-%m-%d %H:%M:%S')
+        if lta_schedule.get("fetched_at") else "",
+        "court_count": len(courts),
+        "courts": {c: courts[c] for c in sorted(courts, key=court_sort_key)},
+    })
+
+
+@app.route('/api/v1/schedule/court/<path:court>', methods=['GET'])
+def api_schedule_court(court):
+    """
+    One court's event list as a flat JSON array (vMix Data Source friendly), in
+    order of play, numbered by "slot". Matches the TennisTicker court name or the
+    LTA court name; "1" matches "LTA-OC-1" and "Rocket Padel Bristol - 01".
+    """
+    wanted = court.strip().lower()
+    tokens = _court_tokens(court)
+    rows = [
+        r for r in _filter_schedule_date(schedule_rows(), request.args.get("date"))
+        if wanted in (r["court"].lower(), r["lta_court"].lower())
+        or (len(tokens) == 1 and (tokens <= _court_tokens(r["court"]) or tokens <= _court_tokens(r["lta_court"])))
+    ]
+    return jsonify([{"slot": str(i), **{k: (v if isinstance(v, str) else str(v).lower() if isinstance(v, bool) else str(v))
+                                        for k, v in r.items()}}
+                    for i, r in enumerate(rows, start=1)])
 
 
 # ====================================================================
