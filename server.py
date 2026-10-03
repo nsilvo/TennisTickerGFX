@@ -43,6 +43,10 @@ CURRENT_TOURNAMENT_ID = os.getenv("TOURNAMENT_ID", '13')
 # A feed can carry matches from several tournaments; each match has its own <tournid>.
 # When non-empty, only matches with these tournids are shown anywhere (set on /config).
 MATCH_TOURNID_FILTER = [t.strip() for t in os.getenv("MATCH_TOURNID_FILTER", "").split(",") if t.strip()]
+# Minutes a finished match's result stays as its court's vMix / overlay match (0 = move on at once).
+# The next match going live, or "next match" for the court, ends the hold early.
+RESULT_HOLD_MINUTES = int(os.getenv("RESULT_HOLD_MINUTES", "5"))
+released_results = set()   # match ids whose result hold was ended early
 ENABLE_SCRAPER = os.getenv("ENABLE_SCRAPER", "true").strip().lower() in ("1", "true", "yes", "on")
 SERVER_PORT = int(os.getenv("PORT", "5000"))
 
@@ -1297,9 +1301,12 @@ class XMLCacheManager:
 # ====================================================================
 def load_persisted_settings(mgr):
     """Apply admin settings saved in the DB (they override env defaults)."""
-    global CURRENT_TOURNAMENT_ID, TT_USERID, TT_CONTRACT, MATCH_TOURNID_FILTER
+    global CURRENT_TOURNAMENT_ID, TT_USERID, TT_CONTRACT, MATCH_TOURNID_FILTER, RESULT_HOLD_MINUTES
 
     with state_lock:
+        saved_hold = mgr.get_setting("result_hold_minutes")
+        if saved_hold is not None and str(saved_hold).isdigit():
+            RESULT_HOLD_MINUTES = int(saved_hold)
         saved_filter = mgr.get_setting("match_tournid_filter")
         if saved_filter is not None:
             MATCH_TOURNID_FILTER = [t for t in saved_filter.split(",") if t]
@@ -2045,6 +2052,7 @@ def health_check():
 @app.route('/config', methods=['GET', 'POST'])
 def config_page():
     """Configuration page for runtime settings such as tournament id."""
+    global RESULT_HOLD_MINUTES
     message = None
     error = None
 
@@ -2063,6 +2071,16 @@ def config_page():
                 message = msg
             else:
                 error = msg
+        elif form_name == 'result_hold':
+            try:
+                minutes = max(0, min(120, int(request.form.get('minutes', '5'))))
+                RESULT_HOLD_MINUTES = minutes
+                if manager:
+                    manager.save_setting("result_hold_minutes", str(minutes))
+                message = (f"Finished matches stay on air for {minutes} minute(s), or until the next match on the court goes live."
+                           if minutes else "Courts move to their next match as soon as a match finishes.")
+            except ValueError:
+                error = "Enter a number of minutes."
         elif form_name == 'lta_schedule':
             ok, msg = refresh_lta_schedule(request.form.get('lta_url', '').strip() or None)
             if ok:
@@ -2108,6 +2126,7 @@ def config_page():
         'config.html',
         tournament_id=tour_id,
         match_tournid_filter=match_filter,
+        result_hold_minutes=RESULT_HOLD_MINUTES,
         feed_tournaments=feed_tournaments(),
         lta_schedule_info={
             "url": lta_schedule.get("url") or "",
@@ -4134,11 +4153,27 @@ def select_match_per_court(all_matches):
     return {court: pick_court_match(ms) for court, ms in by_court.items()}
 
 
+def result_finished_at(m):
+    """When a finished match's result arrived: the feed's last score change, else its row timestamp."""
+    mid = str(m.get("matchid") or "")
+    return (manager.feed_score_ts.get(mid) if manager else 0) or m.get("timestamp") or 0
+
+
+def result_on_hold(m):
+    """True while a just-finished feed match should stay its court's on-air match."""
+    if RESULT_HOLD_MINUTES <= 0 or m.get("manual") or classify_match_status(m) != "COMPLETED":
+        return False
+    if str(m.get("matchid")) in released_results:
+        return False
+    return time.time() - result_finished_at(m) < RESULT_HOLD_MINUTES * 60
+
+
 def pick_court_match(ms):
     """
-    The one match a court shows (vMix and overlays): live, then staged (pre-loaded
-    from our own data, earliest first), then the feed's next planned match, then the
-    most recently completed.
+    The one match a court shows (vMix and overlays): live; then a finished result still
+    on hold (manual result awaiting "mark complete", or a feed result within the hold
+    time); then staged (pre-loaded from our own data, earliest first); then the feed's
+    next planned match; then the most recently completed.
     """
     live = [x for x in ms if classify_match_status(x) == "LIVE"]
     if live:
@@ -4147,6 +4182,10 @@ def pick_court_match(ms):
     awaiting = [x for x in ms if x.get("awaiting_confirmation")]
     if awaiting:
         return awaiting[0]
+    # A feed match that has just finished keeps the court for the result hold (scores + winner on air)
+    held = [x for x in ms if result_on_hold(x)]
+    if held:
+        return max(held, key=result_finished_at)
     staged = [x for x in ms if x.get("staged") and classify_match_status(x) == "UPCOMING"]
     if staged:
         return sorted(staged, key=lambda x: (str(x.get("schedule_date") or ""),
@@ -4378,6 +4417,24 @@ def graphics_command(court, graphic, action):
 
     return jsonify({"status": "success", "court": court, "graphic": graphic,
                     "action": action, "state": state})
+
+
+@app.route('/api/v1/court/<path:court>/next', methods=['GET', 'POST'])
+def court_next_match(court):
+    """
+    End the result hold on a court so it moves straight on to its next match.
+    GET works too, for vMix shortcuts / Stream Deck: /api/v1/court/LTA-OC-1/next
+    """
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+    court = str(court).strip()
+    held = [m for m in manager.get_latest_data() if str(m.get("court") or "").strip() == court and result_on_hold(m)]
+    released_results.update(str(m.get("matchid")) for m in held)
+    if held:
+        manager.broadcast_matches([str(m.get("matchid")) for m in held])
+    now_on = resolve_match(court=court)
+    return jsonify({"status": "success", "court": court, "released": [str(m.get("matchid")) for m in held],
+                    "now_showing": str(now_on.get("matchid")) if now_on else ""})
 
 
 @app.route('/api/v1/graphics/<path:court>', methods=['GET'])

@@ -1158,6 +1158,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 <a href="${casparScoreboardUrl}" target="_blank" class="caspar-btn-alt">📺 Scoreboard</a>
                 <a href="${commentaryUrl}" target="_blank" class="caspar-btn-alt">📈 Commentary</a>
                 <a href="/score?match=${encodeURIComponent(matchId)}" target="_blank" class="caspar-btn-alt">✍️ Score</a>
+                ${isCompleted && match.court ? `<button type="button" class="caspar-btn-alt" title="Stop holding this result: the court moves on to its next match"
+                    onclick="fetch('/api/v1/court/${encodeURIComponent(match.court)}/next', {method: 'POST'}).then(r => r.json()).then(j => alert(j.released && j.released.length ? 'Court moved on to its next match.' : 'This result is not being held on air.'))">⏭ Next match</button>` : ''}
                 <button class="caspar-preview-btn" type="button" onclick="togglePreview('${matchId}')">👁 Preview</button>
             </div>
             <div id="preview-${matchId}" class="caspar-preview hidden">

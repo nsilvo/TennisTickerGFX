@@ -375,6 +375,18 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <button class="btn" type="submit">Save Filter</button>
         </form>
 
+        <h2 class="subheading">Finished Matches on Air</h2>
+        <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="result_hold">
+            <p class="hint">When a match finishes, keep its result (scores and winner) as the court's vMix and overlay match
+               for this many minutes, so winner graphics can run. The next match on the court going live ends it early, as does
+               <code>/api/v1/court/&lt;court&gt;/next</code> (or ⏭ Next match on the dashboard). 0 = move on straight away.
+               Manually scored matches stay until they're marked complete.</p>
+            <label for="result_hold_minutes">Minutes to hold a finished result</label>
+            <input id="result_hold_minutes" name="minutes" type="number" min="0" max="120" value="{{ result_hold_minutes }}">
+            <button class="btn" type="submit">Save</button>
+        </form>
+
         <h2 class="subheading">LTA Order of Play</h2>
         <form method="post" action="/config">
             <input type="hidden" name="form_name" value="lta_schedule">
