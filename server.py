@@ -1221,6 +1221,9 @@ class XMLCacheManager:
             # TennisTicker's planned copy of a staged match is hidden until it goes live
             matches_list = [m for m in matches_list if str(m.get('matchid')) not in covered] + staged
 
+        # Matches linked to the LTA order of play take LTA's names, event and final result
+        matches_list = apply_lta_preference(matches_list)
+
         if self.manual_scores:
             # A commentator's manual score replaces the feed's score for that match everywhere,
             # unless TennisTicker has changed the score since the commentator's last action.
@@ -3486,6 +3489,88 @@ def lta_orientation(fm, entry):
     return lta_match_score(fm, entry)[0]
 
 
+def _pair_side(feed_side, lta_side):
+    """Pair each feed player with the LTA player they are (best overall pairing)."""
+    names = [p["name"] for p in lta_side]
+    best, best_order = -1.0, None
+    for order in itertools.permutations(range(len(names))):
+        score = min((_player_similarity(fp["name"], names[i]) for fp, i in zip(feed_side, order)), default=0)
+        if score > best:
+            best, best_order = score, order
+    return [(fp, lta_side[i]) for fp, i in zip(feed_side, best_order or [])]
+
+
+def _lta_feed_style(feed_player, lta_player):
+    """A player in the feed's "SURNAME I (CTRY)" form, spelt as LTA has it."""
+    if _player_similarity(feed_player["name"], lta_player["name"]) == 1.0:
+        name = feed_player["name"]   # same name: keep the feed's form so player keys don't change
+    else:
+        first, _, surname = lta_player["name"].partition(" ")
+        name = f"{(surname or first).upper()} {first[:1].upper()}".strip()
+    return name, (f"{name} ({feed_player['country']})" if feed_player.get("country") else name)
+
+
+def apply_lta_preference(rows):
+    """
+    For TennisTicker matches linked to the LTA order of play, LTA's data wins:
+    player names (LTA spelling, kept in the feed's format), event and round,
+    tournament name, and - once LTA has recorded it - the final result. Live
+    point-by-point scores still come from TennisTicker.
+    """
+    entries = {e["tt_matchid"]: e for e in lta_schedule.get("matches", []) if e.get("tt_matchid")}
+    if not entries:
+        return rows
+    out = []
+    for m in rows:
+        e = entries.get(str(m.get("matchid") or ""))
+        if not e or m.get("staged"):
+            out.append(m)
+            continue
+        orientation, _score = lta_match_score(m, e)
+        if not orientation:
+            out.append(m)
+            continue
+        lta_sides = e["sides"] if orientation == 1 else [e["sides"][1], e["sides"][0]]
+        n = dict(m)
+        for idx in (1, 2):
+            feed_side = side_player_entries(m.get(f"player{idx}_full") or m.get(f"player{idx}"))
+            lta_side = lta_sides[idx - 1]
+            if feed_side and len(feed_side) == len(lta_side):
+                styled = [_lta_feed_style(fp, lp) for fp, lp in _pair_side(feed_side, lta_side)]
+            else:
+                styled = [_lta_feed_style({"name": "", "country": ""}, lp) for lp in lta_side]
+            if not styled:
+                continue
+            raw = " / ".join(s[1] for s in styled)
+            n[f"player{idx}"] = raw
+            n[f"player{idx}_full"] = raw
+            n[f"player{idx}_surname"] = " / ".join(_feed_name_key(s[0])[0] for s in styled)
+        n["tt_matchname"] = m.get("matchname")
+        n["matchname"] = " · ".join(x for x in (e["event"], e["round"]) if x) or m.get("matchname")
+        if lta_schedule.get("tournament_name"):
+            n["tname"] = lta_schedule["tournament_name"]
+        n["lta_key"] = e["key"]
+        n["lta_court"] = e["lta_court"]
+        # LTA's recorded result is the official one
+        if e["status"] == "COMPLETED" and e.get("winner") and e.get("sets"):
+            for i in range(1, MAX_SETS + 1):
+                for k in (f"set{i}_p1", f"set{i}_p2", f"set{i}_tb"):
+                    n.pop(k, None)
+            for i, (a, b) in enumerate(e["sets"][:MAX_SETS], start=1):
+                n[f"set{i}_p1"], n[f"set{i}_p2"] = (a, b) if orientation == 1 else (b, a)
+                n[f"set{i}_tb"] = ""
+            n["sets_played_count"] = len(e["sets"])
+            winner_side = e["winner"] if orientation == 1 else 3 - e["winner"]
+            n["winner"] = str(winner_side)
+            n["winner_name"] = n[f"player{winner_side}"]
+            n["matchstatus"] = "(completed)"
+            n["is_plan"] = 0
+            n["game1"], n["game2"] = "", ""
+            n["lta_result"] = True
+        out.append(n)
+    return out
+
+
 def link_lta_schedule():
     """
     Attach TennisTicker match ids to LTA schedule entries: live matches (any day's
@@ -4330,10 +4415,15 @@ def side_surnames(raw, bios):
     return " / ".join(out)
 
 
+def _fix_mc(name):
+    """'Paul Mcardle' -> 'Paul McArdle' (LTA lists some names with plain capitalisation)."""
+    return re.sub(r"\bMc([a-z])", lambda m: "Mc" + m.group(1).upper(), name)
+
+
 def full_side_name(raw, bios):
     """Side name using each player's saved full name ("William Skidelsky / Aled Smith"), feed name as fallback."""
     return " / ".join(
-        (bios.get(p["key"]) or {}).get("display_name") or _feed_full_name(p["name"])
+        _fix_mc((bios.get(p["key"]) or {}).get("display_name") or _feed_full_name(p["name"]))
         for p in side_player_entries(raw)
     )
 
