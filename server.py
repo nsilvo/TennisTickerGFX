@@ -2366,6 +2366,7 @@ def api_manual_score(match_id):
     GET: current manual scoring state. POST JSON {"action": ...}:
       start   {from_feed, preset, rules, server: 1|2, status: warmup|live}  begin scoring this match
       point   {side: 1|2, kind}       award a point; kind: normal, winner, forced_error, unforced_error
+      game    {side: 1|2}             award the game (game-by-game scoring, no point detail)
       ace                             point to the server
       fault                           1st serve fault -> 2nd serve; on 2nd serve = double fault
       penalty {side: 1|2}             point penalty awarded to side
@@ -2396,7 +2397,7 @@ def api_manual_score(match_id):
         side = int(body.get('side') or 0)
     except (TypeError, ValueError):
         side = 0
-    scoring_actions = ('point', 'ace', 'fault', 'penalty', 'games')
+    scoring_actions = ('point', 'ace', 'fault', 'penalty', 'games', 'game')
 
     with manual_score_lock:
         state = manager.manual_scores.get(match_id)
@@ -2435,6 +2436,8 @@ def api_manual_score(match_id):
                 state = fresh
             if action == 'point':
                 manual_scoring.point(state, side, str(body.get('kind') or 'normal'))
+            elif action == 'game':
+                manual_scoring.award_game(state, side)
             elif action == 'ace':
                 manual_scoring.ace(state)
             elif action == 'fault':

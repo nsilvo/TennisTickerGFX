@@ -298,6 +298,36 @@ def fault(state):
     return point(state, 3 - state["server"], "double_fault")
 
 
+def award_game(state, side):
+    """
+    Game-by-game scoring (no point detail): award the current game to `side`.
+    At the tiebreak score this wins the tiebreak and the set; in a match tiebreak
+    it adds a tiebreak point (the match tiebreak is scored in points).
+    Not added to the point log, so point statistics stay point-only.
+    """
+    ensure(state)
+    if state["winner"] or side not in (1, 2):
+        return state
+    _snapshot(state)
+    _start_if_needed(state)
+    me = side - 1
+    if in_match_tiebreak(state):
+        _award(state, side, "normal", state["serve"])
+    elif in_tiebreak(state):
+        games = list(state["games"])
+        games[me] += 1
+        next_server = 3 - (state["tb_first_server"] or state["server"])
+        state["tb_first_server"] = 0
+        _complete_set(state, games[0], games[1], None)
+        state["server"] = next_server
+    else:
+        _win_game(state, me)
+    state["points"] = [0, 0] if not in_match_tiebreak(state) else state["points"]
+    state["deuces"] = 0
+    state["serve"] = 1
+    return state
+
+
 def penalty(state, side):
     """Point penalty: point awarded to `side` (code violation)."""
     return point(state, side, "penalty")

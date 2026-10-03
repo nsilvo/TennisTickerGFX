@@ -152,6 +152,12 @@ select, input[type=number] {
 .kinds .btn { min-height: 52px; padding: 6px; font-size: 0.78rem; line-height: 1.15; }
 .kinds .btn small { display: block; font-size: 0.68rem; color: var(--muted); font-weight: 600; }
 
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.mode-btn { border: 0; background: var(--panel); color: var(--muted); padding: 10px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.06em; text-transform: uppercase; min-height: 44px; cursor: pointer; }
+.mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.mode-btn.active { background: rgba(255,193,7,0.16); color: var(--gold); }
+.games-mode .point-btn { min-height: clamp(150px, 32vh, 280px); }
+.games-mode-hint { grid-column: 1 / -1; text-align: center; font-size: 0.82rem; color: var(--muted); }
 .toolbar { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 10px; margin-top: 10px; }
 .toolbar .btn { min-height: 56px; }
 .btn.undo { font-size: 1.05rem; }
@@ -249,6 +255,11 @@ select, input[type=number] {
             <div class="choice" id="first-server"></div>
             <label class="check" id="from-feed-wrap"><input type="checkbox" id="from-feed" checked> Carry on from the current feed score</label>
             <label class="check"><input type="checkbox" id="lock"> Score is mine: ignore TennisTicker updates for this match</label>
+            <label class="field">Scoring</label>
+            <div class="choice" id="mode-choice">
+                <button type="button" class="btn" data-setup-mode="points">● Point by point<br><small class="muted">serves, faults, stats</small></button>
+                <button type="button" class="btn" data-setup-mode="games">▦ Game by game<br><small class="muted">just the games</small></button>
+            </div>
             <div class="start-row">
                 <button class="btn" type="button" data-start="warmup">⏱ Warm-up</button>
                 <button class="btn gold" type="button" data-start="live">▶ Start match · set live</button>
@@ -260,7 +271,11 @@ select, input[type=number] {
     <section id="scoring" class="hidden">
         <div class="board" id="board"></div>
         <div class="banners" id="banners"></div>
-        <div class="serve-bar">
+        <div class="mode-switch" role="tablist" aria-label="Scoring mode">
+            <button type="button" class="mode-btn" data-mode="points">● Point by point</button>
+            <button type="button" class="mode-btn" data-mode="games">▦ Game by game</button>
+        </div>
+        <div class="serve-bar" id="serve-bar">
             <div class="serve-info"><span class="which" id="serve-which"></span><span class="who" id="serve-who"></span></div>
             <button class="btn fault" type="button" id="fault-btn" data-act="fault">Fault</button>
             <button class="btn ace" type="button" data-act="ace">Ace</button>
@@ -299,6 +314,13 @@ function followMatchId(j){
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let data = null;           // last /api/v1/manual response
+// Point-by-point or game-by-game, remembered per match (and as the default for new matches)
+function getMode(){
+    try { return localStorage.getItem(`scoreMode:${MATCH_ID}`) || localStorage.getItem('scoreMode') || 'points'; } catch(e){ return 'points'; }
+}
+function setMode(mode){
+    try { localStorage.setItem(`scoreMode:${MATCH_ID}`, mode); localStorage.setItem('scoreMode', mode); } catch(e){}
+}
 let firstServer = 1;
 let queue = Promise.resolve();
 let armed = '';            // two-tap confirmations
@@ -436,6 +458,7 @@ function renderSetup(){
     $('first-server').innerHTML = [1, 2].map(w => `<button type="button" class="btn${firstServer === w ? ' on' : ''}" data-first="${w}">🎾 ${esc(w === 1 ? n1 : n2)}</button>`).join('');
     const hasScore = (+m.sets_played_count || 0) > 0;
     $('from-feed-wrap').classList.toggle('hidden', !hasScore);
+    document.querySelectorAll('[data-setup-mode]').forEach(b => b.classList.toggle('on', b.dataset.setupMode === getMode()));
 }
 
 $('preset').addEventListener('change', e => {
@@ -445,6 +468,8 @@ $('preset').addEventListener('change', e => {
 $('setup').addEventListener('click', e => {
     const f = e.target.closest('[data-first]');
     if (f){ firstServer = +f.dataset.first; renderSetup(); return; }
+    const sm = e.target.closest('[data-setup-mode]');
+    if (sm){ setMode(sm.dataset.setupMode); renderSetup(); return; }
     const s = e.target.closest('[data-start]');
     if (!s) return;
     const preset = $('preset').value;
@@ -506,6 +531,26 @@ function renderScoring(){
     fb.classList.toggle('df', st.serve === 2);
     document.querySelectorAll('.serve-bar .btn').forEach(b => b.disabled = done);
 
+    const gamesMode = getMode() === 'games';
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === getMode()));
+    $('serve-bar').classList.toggle('hidden', gamesMode);
+    document.querySelector('.sides').classList.toggle('games-mode', gamesMode);
+    if (gamesMode){
+        // One big button per side: + game (or the tiebreak / match-tiebreak equivalent)
+        const label = st.in_match_tiebreak ? '+ Point · match tiebreak' : st.in_tiebreak ? 'Tiebreak won · set' : '+ Game';
+        [1, 2].forEach(w => {
+            $(`side${w}`).innerHTML = `<button type="button" class="point-btn" data-game="${w}"${done ? ' disabled' : ''}>
+                <span class="lbl">${esc(label)} · ${w === 1 ? '1 / ←' : '2 / →'}</span>
+                <span class="who">${esc(w === 1 ? n1 : n2)}</span></button>`;
+        });
+        document.querySelector('[data-act="undo"]').disabled = !st.can_undo;
+        if (!$('stats-card').classList.contains('hidden')) renderStats();
+        if (!$('sheet').classList.contains('hidden')) renderSheet();
+        feedNotice(st, done);
+        tick();
+        return;
+    }
+
     // Point buttons per side; errors are made by that side (point to the opponent)
     [1, 2].forEach(w => {
         const me = w === 1 ? n1 : n2, opp = w === 1 ? n2 : n1;
@@ -520,16 +565,19 @@ function renderScoring(){
     });
     document.querySelector('[data-act="undo"]').disabled = !st.can_undo;
 
-    // Feed status
+    feedNotice(st, done);
+
+    if (!$('stats-card').classList.contains('hidden')) renderStats();
+    if (!$('sheet').classList.contains('hidden')) renderSheet();
+    tick();
+}
+
+function feedNotice(st, done){
     if (data.feed_newer) notice(`📡 TennisTicker has updated the score since your last action, so the feed's score is on air.
         Your next point carries on from it. <button class="btn small" type="button" data-act="resync">Sync now</button>
         <button class="btn small" type="button" data-act="lock-on">Ignore feed for this match</button>`, 'info');
     else if (done) notice(`Match finished. The result is on air. <button class="btn small" type="button" data-act="stop-armed">Hand back to feed</button>`, 'done');
     else notice('');
-
-    if (!$('stats-card').classList.contains('hidden')) renderStats();
-    if (!$('sheet').classList.contains('hidden')) renderSheet();
-    tick();
 }
 
 function short(name){
@@ -600,6 +648,10 @@ function renderSheet(){
                     ${armed === key ? 'Tap again: ' : ''}${esc(short(w === 1 ? n1 : n2))} win · ${esc(r === 'retired' ? 'opp. retired' : r)}</button>`;
             })).join('')}
         </div>
+        <h3>Award a game (skip the points)</h3>
+        <div class="opts">
+            ${[1, 2].map(w => `<button class="btn" data-game="${w}"${st.winner ? ' disabled' : ''}>+ Game · ${esc(short(w === 1 ? n1 : n2))}</button>`).join('')}
+        </div>
         <h3>Corrections · games this set</h3>
         <div class="opts">
             ${[1, 2].map(w => `<div class="games-adjust"><span>${esc(short(w === 1 ? n1 : n2))}</span>
@@ -662,6 +714,10 @@ function arm(key){
 }
 
 document.addEventListener('click', e => {
+    const g = e.target.closest('[data-game]');
+    if (g && !g.disabled && data && data.active){ act('game', { side: +g.dataset.game }); return; }
+    const mb = e.target.closest('[data-mode]');
+    if (mb && data && data.active){ setMode(mb.dataset.mode); renderScoring(); return; }
     const p = e.target.closest('[data-point]');
     if (p && !p.disabled && data && data.active){ act('point', { side: +p.dataset.point, kind: p.dataset.kind || 'normal' }); return; }
     const b = e.target.closest('[data-act]');
@@ -689,8 +745,9 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
     if (!data || !data.active || e.repeat || e.target.closest && e.target.closest('input, select, textarea')) return;
     const k = e.key.toLowerCase();
-    if (k === '1' || k === 'arrowleft'){ e.preventDefault(); act('point', { side: 1 }); }
-    else if (k === '2' || k === 'arrowright'){ e.preventDefault(); act('point', { side: 2 }); }
+    const scoreAction = getMode() === 'games' ? 'game' : 'point';
+    if (k === '1' || k === 'arrowleft'){ e.preventDefault(); act(scoreAction, { side: 1 }); }
+    else if (k === '2' || k === 'arrowright'){ e.preventDefault(); act(scoreAction, { side: 2 }); }
     else if (k === 'f'){ act('fault'); }
     else if (k === 'a'){ act('ace'); }
     else if (k === 'u' || k === 'backspace'){ e.preventDefault(); act('undo'); }
