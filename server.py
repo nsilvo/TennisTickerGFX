@@ -1454,10 +1454,12 @@ def update_match_tournid_filter(tournids):
 
 
 def all_known_matches():
-    """Current cached matches plus archived ones, de-duplicated by matchid."""
+    """Current cached matches plus archived ones, de-duplicated by matchid (staged pre-loads excluded)."""
     if manager is None:
         return []
-    matches = list(manager.get_latest_data())
+    # Staged rows are pre-loads from the LTA order of play, not results; their LTA-style
+    # names would otherwise show up as extra players alongside the feed's names
+    matches = [m for m in manager.get_latest_data() if not m.get('staged')]
     seen = {str(m.get('matchid')) for m in matches}
     for m in filter_match_tournaments(manager.get_archived_matches()):
         if str(m.get('matchid')) not in seen:
@@ -3702,12 +3704,23 @@ def schedule_rows():
     entries = lta_schedule.get("matches", [])
     linked_ids = {e.get("tt_matchid") for e in entries if e.get("tt_matchid")}
     display_link = {}
+
+    def same_score(fm, e, orientation):
+        """A finished feed match and an LTA entry with the same set scores (any day)."""
+        feed_sets = [s.split("(")[0] for s in match_score_line(fm).split()]
+        lta_sets = [f"{a}-{b}" if orientation == 1 else f"{b}-{a}" for a, b in e["sets"]]
+        return bool(feed_sets) and feed_sets == lta_sets
+
     for mid, fm in feed.items():
         if mid in linked_ids or fm.get("staged") or classify_match_status(fm) == "UPCOMING":
             continue
         for e in entries:
-            if not e.get("tt_matchid") and e["key"] not in display_link and e["date"] == today \
-                    and lta_orientation(fm, e):
+            if e.get("tt_matchid") or e["key"] in display_link:
+                continue
+            orientation = lta_orientation(fm, e)
+            # Same players today, or (for a finished match on another day) the same players and score
+            if orientation and (e["date"] == today or
+                                (classify_match_status(fm) == "COMPLETED" and same_score(fm, e, orientation))):
                 display_link[e["key"]] = mid
                 break
 
@@ -3806,6 +3819,70 @@ def api_schedule():
         if lta_schedule.get("fetched_at") else "",
         "court_count": len(courts),
         "courts": {c: courts[c] for c in sorted(courts, key=court_sort_key)},
+    })
+
+
+def resolve_name_to_player_key(name, known):
+    """Our player key for a display name ("John Byrne" -> "BYRNE J"), or ''."""
+    key = normalize_player_key(name)
+    if manager:
+        key = manager.resolve_player_key(key)
+    if key in known:
+        return key
+    first, _, surname = name.partition(" ")
+    candidates = lta_candidate_keys({"first": first, "surname": surname or first})
+    if len(surname.split()) > 1:   # compound surname: the feed may use the last part ("GIMENO P")
+        candidates.append(normalize_player_key(f"{surname.split()[-1]} {first[:1]}"))
+    for candidate in candidates:
+        candidate = manager.resolve_player_key(candidate) if manager else candidate
+        if candidate in known:
+            return candidate
+    return ""
+
+
+@app.route('/api/v1/search', methods=['GET'])
+def api_search():
+    """
+    Player / match search for the commentary screen: every match (LTA order of play
+    merged with TennisTicker, all days) involving a player whose name matches ?q=.
+    """
+    q = (request.args.get("q") or "").strip().lower()
+    tokens = [x for x in re.split(r"\s+", q) if x]
+    if len(q) < 2:
+        return jsonify({"query": q, "players": [], "matches": []})
+
+    def matches_name(name):
+        n = name.lower()
+        return all(tok in n for tok in tokens)
+
+    known = set(collect_known_players()) | set(manager.get_all_player_bios() if manager else {})
+    players, rows = {}, []
+    for r in schedule_rows():
+        hit_side, hit_names = 0, []
+        for side, side_name in ((1, r["p1_full_name"]), (2, r["p2_full_name"])):
+            names = [x.strip() for x in side_name.split(" / ") if x.strip()]
+            found = [x for x in names if matches_name(x)]
+            if found:
+                hit_side = hit_side or side
+                hit_names += found
+        if not hit_side:
+            continue
+        result = ""
+        if r["status"] == "COMPLETED" and r["winner"] in ("1", "2"):
+            result = "W" if r["winner"] == str(hit_side) else "L"
+        rows.append(dict(r, match_side=hit_side, players=hit_names, result=result))
+        for name in hit_names:
+            entry = players.setdefault(name, {"name": name, "key": resolve_name_to_player_key(name, known), "matches": 0})
+            entry["matches"] += 1
+
+    order = {"LIVE": 0, "UPCOMING": 1, "UNSCHEDULED": 2, "COMPLETED": 3}
+    upcoming = sorted([r for r in rows if r["status"] != "COMPLETED"],
+                      key=lambda r: (order.get(r["status"], 1), r["date"], r["time"] or "99:99"))
+    done = sorted([r for r in rows if r["status"] == "COMPLETED"], key=lambda r: (r["date"], r["time"] or ""), reverse=True)
+    return jsonify({
+        "query": q,
+        "players": sorted(players.values(), key=lambda p: (-p["matches"], p["name"])),
+        "matches": (upcoming + done)[:300],
     })
 
 

@@ -428,6 +428,46 @@ body.screen-mode .score-view { flex: 1; min-height: 0; overflow-y: auto; }
     .point-name { font-size: 1.2rem; }
     .score-view .btn.danger { margin-left: 0; }
 }
+
+/* 🔍 Search tab */
+.search-host { min-height: 0; }
+body.screen-mode .search-host { flex: 1; min-height: 0; overflow-y: auto; }
+.search-page { display: block; }
+.search-panel { display: flex; flex-direction: column; gap: 14px; }
+.search-bar input {
+    width: 100%; padding: 14px 16px; border-radius: 10px; font-size: 1.15rem;
+    background: rgba(0,0,0,0.35); color: var(--text-light); border: 1px solid var(--border-soft);
+}
+.search-players { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.search-players:empty { display: none; }
+.search-chip {
+    padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+    color: var(--text-light); background: rgba(255,255,255,0.05); border: 1px solid var(--border-soft);
+}
+.search-chip span { color: var(--muted-text); font-weight: 400; margin-left: 4px; }
+.search-chip.active { border-color: rgba(255,193,7,0.7); background: rgba(255,193,7,0.16); color: var(--test-color); }
+.search-empty { padding: 10px 4px; }
+.search-detail .talking { font-size: 1rem; }
+.search-row {
+    display: grid; grid-template-columns: 150px 210px minmax(0, 1fr) 170px; gap: 12px; align-items: center;
+    padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.07); font-size: 0.95rem;
+}
+.search-row.done { opacity: 0.8; }
+.search-row.live { background: rgba(61,220,132,0.06); }
+.search-when { display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
+.search-when .status-badge { align-self: flex-start; }
+.search-court a { color: var(--test-color); text-decoration: none; font-weight: 700; }
+.search-court .hint { font-size: 0.75rem; }
+.search-me { color: #fff; background: rgba(255,193,7,0.18); padding: 0 4px; border-radius: 4px; }
+.search-score { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+.search-res { display: inline-block; min-width: 24px; text-align: center; border-radius: 6px; padding: 1px 6px; font-size: 0.8rem; margin-left: 6px; color: #0b0b11; }
+.search-res.W { background: var(--success-color); }
+.search-res.L { background: var(--error-color); }
+@media (max-width: 800px){
+    .search-row { grid-template-columns: 1fr auto; }
+    .search-court, .search-sides { grid-column: 1 / -1; }
+    .search-score { grid-column: 2; grid-row: 1; }
+}
 </style>
 </head>
 <body>
@@ -1153,7 +1193,7 @@ const TAB_KEY = 'commentaryTab';
 function activeTab(){
     let tab = new URLSearchParams(location.search).get('tab');
     if (!tab){ try { tab = localStorage.getItem(TAB_KEY); } catch(e){} }
-    return ['players', 'score'].includes(tab) ? tab : 'match';
+    return ['players', 'score', 'search'].includes(tab) ? tab : 'match';
 }
 
 function setTab(tab){
@@ -1602,6 +1642,155 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'u' || e.key === 'U' || e.key === 'Backspace'){ e.preventDefault(); manualAction('undo'); }
 });
 
+// ====================================================================
+// 🔍 Search tab: any player's matches and scores (all courts, all days),
+// with their this-event stats and talking points. The panel is one persistent
+// element moved into each re-render, so typing isn't interrupted by live updates.
+// ====================================================================
+const overviewSearch = !FOCUS_COURT && new URLSearchParams(location.search).get('tab') === 'search';
+let searchPanel = null;
+let searchState = { q: '', results: null, selected: '', detail: null, timer: null };
+
+function buildSearchPanel(){
+    const el = document.createElement('div');
+    el.className = 'search-panel';
+    el.innerHTML = `
+        <div class="card search-bar">
+            <input type="search" id="ps-input" placeholder="Search a player (e.g. Byrne, Patricia, Bush)…" autocomplete="off" spellcheck="false">
+            <div class="search-players" id="ps-players"></div>
+        </div>
+        <div class="search-body" id="ps-body"><div class="hint search-empty">Type at least two letters of a player's name. Matches from every court and day are shown, live and upcoming first.</div></div>`;
+    const input = el.querySelector('#ps-input');
+    input.addEventListener('input', () => {
+        clearTimeout(searchState.timer);
+        searchState.timer = setTimeout(() => runSearch(input.value), 250);
+    });
+    el.addEventListener('click', e => {
+        const chip = e.target.closest('[data-player]');
+        if (chip){ selectSearchPlayer(chip.dataset.player); }
+    });
+    return el;
+}
+
+function mountSearch(){
+    const host = document.getElementById('search-host');
+    if (!host) return;
+    if (!searchPanel) searchPanel = buildSearchPanel();
+    const input = searchPanel.querySelector('#ps-input');
+    const hadFocus = document.activeElement === input;
+    const sel = hadFocus ? [input.selectionStart, input.selectionEnd] : null;
+    if (searchPanel.parentNode !== host) host.appendChild(searchPanel);
+    if (hadFocus){ input.focus(); try { input.setSelectionRange(sel[0], sel[1]); } catch(e){} }
+    else if (!searchState.q && !host.dataset.focused){ host.dataset.focused = '1'; input.focus(); }
+}
+
+async function runSearch(q){
+    searchState.q = q.trim();
+    if (searchState.q.length < 2){
+        searchState.results = null; searchState.selected = ''; searchState.detail = null;
+        renderSearch();
+        return;
+    }
+    try {
+        const j = await (await fetch(`/api/v1/search?q=${encodeURIComponent(searchState.q)}`)).json();
+        if (j.query !== searchState.q.toLowerCase()) return;   // a newer search is in flight
+        searchState.results = j;
+        const names = j.players.map(p => p.name);
+        if (!names.includes(searchState.selected)) searchState.selected = names.length === 1 ? names[0] : '';
+        renderSearch();
+        loadSearchDetail();
+    } catch(e){}
+}
+
+function selectSearchPlayer(name){
+    searchState.selected = searchState.selected === name ? '' : name;
+    searchState.detail = null;
+    renderSearch();
+    loadSearchDetail();
+}
+
+async function loadSearchDetail(){
+    const p = searchState.results && searchState.results.players.find(x => x.name === searchState.selected);
+    if (!p || !p.key){ searchState.detail = null; renderSearch(); return; }
+    try {
+        const r = await fetch(`/api/v1/player/${encodeURIComponent(p.key)}`);
+        searchState.detail = r.ok ? await r.json() : null;
+    } catch(e){ searchState.detail = null; }
+    renderSearch();
+}
+
+function searchDetailHTML(){
+    const d = searchState.detail;
+    if (!d) return '';
+    const es = d.event_stats || {};
+    const chips = [];
+    if (es.matches){
+        chips.push(`<span class="chip">Event <strong>${es.wins}-${es.losses}</strong></span>`);
+        chips.push(`<span class="chip">Sets <strong>${es.sets_won}-${es.sets_lost}</strong></span>`);
+        if (es.games_pct != null) chips.push(`<span class="chip">Games <strong>${es.games_pct}%</strong> (${es.games_won}-${es.games_lost})</span>`);
+        if (es.time_on_court_sec) chips.push(`<span class="chip">On court <strong>${fmtElapsed(es.time_on_court_sec)}</strong></span>`);
+    }
+    const lta = d.lta || {};
+    if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
+    if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
+    const points = (d.talking_points || []).slice(0, 8);
+    return `<div class="card search-detail">
+        <div class="ppanel-head"><span class="ppanel-name">${esc(d.name)}</span>
+            ${d.country ? `<span class="ppanel-sub">${esc(d.country)}</span>` : ''}
+            ${d.lta_url ? `<a class="ppanel-sub" href="${esc(d.lta_url)}" target="_blank" rel="noopener" style="color:#8ab4ff">LTA ↗</a>` : ''}</div>
+        ${chips.length ? `<div class="ppanel-row" style="gap:6px;margin:8px 0">${chips.join('')}</div>` : ''}
+        ${points.length ? `<ul class="talking">${points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+}
+
+function searchSideHTML(name, highlight){
+    return String(name || '').split(' / ').map(n => {
+        const me = highlight && (searchState.selected ? n === searchState.selected : searchState.results.players.some(p => p.name === n));
+        return me ? `<strong class="search-me">${esc(n)}</strong>` : esc(n);
+    }).join(' / ');
+}
+
+function renderSearch(){
+    if (!searchPanel) return;
+    const playersEl = searchPanel.querySelector('#ps-players');
+    const body = searchPanel.querySelector('#ps-body');
+    const res = searchState.results;
+    if (!res){
+        playersEl.innerHTML = '';
+        body.innerHTML = `<div class="hint search-empty">${searchState.q ? 'Keep typing…' : "Type at least two letters of a player's name. Matches from every court and day are shown, live and upcoming first."}</div>`;
+        return;
+    }
+    playersEl.innerHTML = res.players.length > 1 ? res.players.map(p =>
+        `<button type="button" class="search-chip${p.name === searchState.selected ? ' active' : ''}" data-player="${esc(p.name)}">${esc(p.name)} <span>${p.matches}</span></button>`).join('') : '';
+    let rows = res.matches;
+    if (searchState.selected) rows = rows.filter(r => (r.players || []).includes(searchState.selected));
+    if (!rows.length){
+        body.innerHTML = searchDetailHTML() + `<div class="hint search-empty">No matches found for “${esc(searchState.q)}”.</div>`;
+        return;
+    }
+    const today = new Date().toLocaleDateString('en-CA');
+    const list = rows.map(r => {
+        const live = r.status === 'LIVE';
+        const when = r.date === today ? (r.time || 'Today') : `${r.date.slice(8)}/${r.date.slice(5, 7)} ${r.time || ''}`;
+        const res = r.result ? `<span class="search-res ${r.result}">${r.result}</span>` : '';
+        const score = [r.score, live && r.p1_points ? `(${r.p1_points}-${r.p2_points})` : ''].filter(Boolean).join(' ');
+        return `<div class="search-row${live ? ' live' : ''}${r.status === 'COMPLETED' ? ' done' : ''}">
+            <div class="search-when"><span class="status-badge${live ? ' live' : r.status === 'UPCOMING' ? ' upcoming' : ''}">${esc(r.status)}</span>
+                <span>${esc(when)}</span></div>
+            <div class="search-court">${r.court ? `<a href="/stats?court=${encodeURIComponent(r.court)}">${esc(r.court)}</a>` : '<span class="hint">no court</span>'}
+                <div class="hint">${esc([r.event, r.round].filter(Boolean).join(' · '))}</div></div>
+            <div class="search-sides">${searchSideHTML(r.p1_full_name, r.match_side === 1)} <span class="hint">v</span> ${searchSideHTML(r.p2_full_name, r.match_side === 2)}</div>
+            <div class="search-score">${esc(score || '–')} ${res}</div>
+        </div>`;
+    }).join('');
+    body.innerHTML = searchDetailHTML() + `<div class="card search-list"><div class="section-label"><span>${rows.length} match${rows.length === 1 ? '' : 'es'}</span><span>live & upcoming first</span></div>${list}</div>`;
+}
+
+// Keep results current while the tab is open
+setInterval(() => {
+    if (searchPanel && document.body.contains(searchPanel) && searchState.q.length >= 2) runSearch(searchState.q);
+}, 20000);
+
 function focusDashboardHTML(court, mode){
     const ms = matchesForCourt(court);
     const current = pickCurrent(ms);
@@ -1611,8 +1800,12 @@ function focusDashboardHTML(court, mode){
     const meta = `<span class="dash-meta"><span id="dash-conn-dot" class="conn-dot${connOk ? ' online' : ''}"></span><span id="dash-conn">${connOk ? 'Live' : 'Disconnected'}</span> · <span id="dash-updated">${esc(lastUpdatedText)}</span></span>`;
 
     if (!current){
-        return `<div class="dash"><div class="dash-head"><h2>🎾 ${esc(court)}</h2>${meta}${tabs}${toggle}</div>
-            <div class="card"><div class="empty-card">No match data for this court yet.</div></div></div>`;
+        const searching = activeTab() === 'search';
+        return `<div class="dash"><div class="dash-head"><h2>🎾 ${esc(court)}</h2>${meta}
+            <div class="view-tabs"><button type="button" class="view-tab${searching ? '' : ' active'}" data-tab="match">📊 Court</button>
+            <button type="button" class="view-tab${searching ? ' active' : ''}" data-tab="search">🔍 Search</button></div>${tabs}${toggle}</div>
+            ${searching ? '<div class="search-host" id="search-host"></div>'
+                        : '<div class="card"><div class="empty-card">No match data for this court yet.</div></div>'}</div>`;
     }
 
     const live = statusBucket(current) === 'LIVE';
@@ -1628,10 +1821,12 @@ function focusDashboardHTML(court, mode){
         <button type="button" role="tab" class="view-tab${tab === 'match' ? ' active' : ''}" data-tab="match" aria-selected="${tab === 'match'}">📊 Match stats</button>
         <button type="button" role="tab" class="view-tab${tab === 'players' ? ' active' : ''}" data-tab="players" aria-selected="${tab === 'players'}">👤 Player info</button>
         <button type="button" role="tab" class="view-tab${tab === 'score' ? ' active' : ''}" data-tab="score" aria-selected="${tab === 'score'}">✍️ Score</button>
+        <button type="button" role="tab" class="view-tab${tab === 'search' ? ' active' : ''}" data-tab="search" aria-selected="${tab === 'search'}">🔍 Search</button>
     </div>`;
     const panels = who => sidePlayers(current, who).map(p => playerPanelHTML(p, who)).join('');
 
-    const body = tab === 'score' ? manualScoreHTML(current, live)
+    const body = tab === 'search' ? '<div class="search-host" id="search-host"></div>'
+        : tab === 'score' ? manualScoreHTML(current, live)
         : tab === 'players'
         ? `<div class="players-view">
             <div class="card strip-card">
@@ -1732,6 +1927,7 @@ function render(){
         cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => {
             if (scrolls[el.dataset.key]) el.scrollTop = scrolls[el.dataset.key];
         });
+        mountSearch();
         fitStage();
     }
 
@@ -1739,11 +1935,21 @@ function render(){
     tabs.innerHTML = `<a class="court-tab${FOCUS_COURT ? '' : ' active'}" href="/stats">All courts</a>`
         + courts.map(c =>
             `<a class="court-tab${c === FOCUS_COURT ? ' active' : ''}" href="/stats?court=${encodeURIComponent(c)}">${esc(c)}</a>`
-        ).join('');
+        ).join('')
+        + `<a class="court-tab${!FOCUS_COURT && overviewSearch ? ' active' : ''}" href="/stats?tab=search">🔍 Search</a>`;
     if (FOCUS_COURT) return;
 
-    cardsEl.className = 'cards';
     cardsEl.style.transform = '';
+    if (overviewSearch){
+        // All-courts page in search mode: just the search panel
+        if (!cardsEl.querySelector('#search-host')){
+            cardsEl.className = 'search-page';
+            cardsEl.innerHTML = '<div class="search-host" id="search-host"></div>';
+        }
+        mountSearch();
+        return;
+    }
+    cardsEl.className = 'cards';
     if (!courts.length){
         cardsEl.innerHTML = '<div class="card"><div class="empty-card">No matches in the feed yet - this page fills in automatically once scores arrive.</div></div>';
         return;
