@@ -21,6 +21,9 @@ import requests
 import time
 import json
 import re
+import difflib
+import functools
+import itertools
 from datetime import datetime, timedelta
 from threading import Thread, Lock
 from flask import (
@@ -3421,26 +3424,74 @@ def _lta_name_keys(name):
     return {(" ".join(parts[i:]).upper(), initial) for i in range(1, len(parts))}
 
 
-def _sides_match(feed_side, lta_side):
+NAME_MATCH_THRESHOLD = 0.8   # surname similarity needed when the spellings differ
+
+
+@functools.lru_cache(maxsize=50000)
+def _player_similarity(feed_name, lta_name):
+    """
+    0..1: how well a feed name ("MCCARDLE P", "DELAWARE L") matches an LTA name
+    ("Paul Mcardle", "Liam De La Mare"). First initials must agree; surnames are
+    compared ignoring case, spaces and punctuation, allowing small spelling differences.
+    """
+    surname, initial = _feed_name_key(feed_name)
+    flat = lambda s: re.sub(r"[^A-Z]", "", s.upper())
+    fs = flat(surname)
+    if not fs:
+        return 0.0
+    best = 0.0
+    for lta_surname, lta_initial in _lta_name_keys(lta_name):
+        if initial and lta_initial and initial != lta_initial:
+            continue
+        ls = flat(lta_surname)
+        if not ls:
+            continue
+        if fs == ls:
+            return 1.0
+        best = max(best, difflib.SequenceMatcher(None, fs, ls).ratio())
+    return best
+
+
+def _side_score(feed_side, lta_side):
+    """Lowest player similarity for the best pairing of the two sides (0 if they can't match)."""
     if not feed_side or len(feed_side) != len(lta_side):
-        return False
-    keys = set().union(*(_lta_name_keys(p["name"]) for p in lta_side))
-    return all(_feed_name_key(p["name"]) in keys for p in feed_side)
+        return 0.0
+    names = [p["name"] for p in lta_side]
+    best = 0.0
+    for order in itertools.permutations(range(len(names))):
+        score = min(_player_similarity(fp["name"], names[i]) for fp, i in zip(feed_side, order))
+        best = max(best, score)
+        if best == 1.0:
+            break
+    return best
+
+
+def _sides_match(feed_side, lta_side):
+    return _side_score(feed_side, lta_side) >= NAME_MATCH_THRESHOLD
+
+
+def lta_match_score(fm, entry):
+    """(orientation, score): orientation 1 = same side order, 2 = swapped, 0 = different players."""
+    s1 = side_player_entries(fm.get("player1_full") or fm.get("player1"))
+    s2 = side_player_entries(fm.get("player2_full") or fm.get("player2"))
+    same = min(_side_score(s1, entry["sides"][0]), _side_score(s2, entry["sides"][1]))
+    swapped = min(_side_score(s1, entry["sides"][1]), _side_score(s2, entry["sides"][0]))
+    if max(same, swapped) < NAME_MATCH_THRESHOLD:
+        return 0, 0.0
+    return (1, same) if same >= swapped else (2, swapped)
 
 
 def lta_orientation(fm, entry):
     """1 if the feed's side 1 is the LTA entry's side 1, 2 if the sides are swapped, 0 if the players differ."""
-    s1 = side_player_entries(fm.get("player1_full") or fm.get("player1"))
-    s2 = side_player_entries(fm.get("player2_full") or fm.get("player2"))
-    if _sides_match(s1, entry["sides"][0]) and _sides_match(s2, entry["sides"][1]):
-        return 1
-    if _sides_match(s1, entry["sides"][1]) and _sides_match(s2, entry["sides"][0]):
-        return 2
-    return 0
+    return lta_match_score(fm, entry)[0]
 
 
 def link_lta_schedule():
-    """Attach TennisTicker match ids to LTA schedule entries once the feed shows them live."""
+    """
+    Attach TennisTicker match ids to LTA schedule entries: live matches (any day's
+    unfinished entry, today first) and today's finished matches. Names may be spelt
+    slightly differently between the two systems; the closest match is used.
+    """
     if manager is None or not lta_schedule.get("matches"):
         return
     changed = False
@@ -3451,24 +3502,25 @@ def link_lta_schedule():
             mid = str(fm.get("matchid") or "")
             tt_court = str(fm.get("court") or "").strip()
             status = classify_match_status(fm)
-            if mid and mid not in linked and status == "COMPLETED" and tt_court:
-                # Finished before we saw it live: no link, but it still shows which TT court is which LTA court
-                for e in lta_schedule["matches"]:
-                    if e["date"] == today and e["lta_court"] and e["lta_court"] not in lta_court_map["learned"] \
-                            and lta_orientation(fm, e):
-                        lta_court_map["learned"][e["lta_court"]] = tt_court
-                        changed = True
-                        break
-            if not mid or mid in linked or status != "LIVE" or fm.get("staged"):
+            if not mid or mid in linked or fm.get("staged") or status not in ("LIVE", "COMPLETED"):
                 continue
-            candidates = [
-                e for e in lta_schedule["matches"]
-                if not e.get("tt_matchid") and e["status"] != "COMPLETED" and lta_orientation(fm, e)
-            ]
+            candidates = []
+            for e in lta_schedule["matches"]:
+                if e.get("tt_matchid"):
+                    continue
+                # Live: an unfinished entry (any day, today preferred). Finished: today's entry.
+                if status == "LIVE" and e["status"] == "COMPLETED" and e["date"] != today:
+                    continue
+                if status == "COMPLETED" and e["date"] != today:
+                    continue
+                orientation, score = lta_match_score(fm, e)
+                if orientation:
+                    candidates.append((score, e))
             if not candidates:
                 continue
-            # Prefer today's entry, then the earliest scheduled
-            entry = sorted(candidates, key=lambda e: (e["date"] != today, e["date"], e["time"] or "99:99"))[0]
+            # Closest names first, then today's entry, then the earliest scheduled
+            score, entry = sorted(candidates, key=lambda c: (-c[0], c[1]["date"] != today, c[1]["date"],
+                                                             c[1]["time"] or "99:99"))[0]
             entry["tt_matchid"] = mid
             linked.add(mid)
             changed = True
@@ -3481,7 +3533,9 @@ def link_lta_schedule():
                 print(f"Manual scoring moved from {staged_id} to TennisTicker match {mid}")
             if entry["lta_court"] and tt_court:
                 lta_court_map["learned"][entry["lta_court"]] = tt_court
-            print(f"LTA schedule: linked TennisTicker match {mid} to {entry['event']} on {entry['lta_court'] or 'unknown court'}")
+            note = "" if score == 1.0 else f" (names matched {round(score * 100)}%)"
+            print(f"LTA schedule: linked TennisTicker match {mid} ({status.lower()}) to {entry['event']} "
+                  f"on {entry['lta_court'] or 'unknown court'}{note}")
         if changed:
             save_lta_schedule()
     if changed:
