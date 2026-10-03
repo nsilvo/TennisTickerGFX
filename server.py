@@ -23,7 +23,6 @@ import json
 import re
 from datetime import datetime, timedelta
 from threading import Thread, Lock
-from werkzeug.utils import secure_filename
 from flask import (
     Flask, jsonify, request, render_template, make_response,
     session, redirect, url_for
@@ -63,7 +62,6 @@ DEFAULT_STREAM_COURTS = ["5", "6", "7", "8"]
 DEFAULT_STREAM_URLS = ["", "", "", ""]
 BUG_LOGO_UPLOAD_DIR = os.path.join("static", "uploads", "caspar_bug")
 BUG_LOGO_SETTING_KEY = "caspar_bug_logo"
-ALLOWED_BUG_LOGO_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 # --- End Configuration ---
 
 app = Flask(__name__)
@@ -297,6 +295,17 @@ class XMLCacheManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_history_mid ON match_history (matchid, ts);")
 
+        # Uploaded images (e.g. the bug logo) kept in the database so they survive redeploys
+        # and work when the app folder is mounted read-only. data is base64 text.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS media_files (
+                name TEXT PRIMARY KEY,
+                content_type TEXT,
+                data TEXT,
+                updated_at INTEGER
+            );
+        """)
+
         # Linked duplicate player entries: alias_key -> the player_key that holds the bio
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS player_aliases (
@@ -483,6 +492,56 @@ class XMLCacheManager:
     # lta_stats is JSON scraped from the LTA profile (records, form, titles)
     PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
                          "lta_stats")
+
+    # ---- uploaded media (stored in the database) ----
+
+    def save_media(self, name, content_type, payload):
+        import base64
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(f"""
+                    INSERT INTO media_files (name, content_type, data, updated_at) VALUES ({ph}, {ph}, {ph}, {ph})
+                    ON CONFLICT (name) DO UPDATE SET content_type=excluded.content_type, data=excluded.data,
+                        updated_at=excluded.updated_at
+                """, (name, content_type, base64.b64encode(payload).decode('ascii'), int(time.time())))
+                self.conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error saving media '{name}': {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return False
+
+    def get_media(self, name):
+        """(content_type, bytes, updated_at) or None."""
+        import base64
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(f"SELECT content_type, data, updated_at FROM media_files WHERE name={ph}", (name,))
+                row = cursor.fetchone()
+                return (row[0], base64.b64decode(row[1]), row[2]) if row else None
+            except Exception as e:
+                print(f"Error reading media '{name}': {e}")
+                return None
+
+    def get_media_version(self, name):
+        """updated_at for a stored file (cheap: no image data), or None."""
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(f"SELECT updated_at FROM media_files WHERE name={ph}", (name,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except Exception as e:
+                print(f"Error reading media version '{name}': {e}")
+                return None
 
     # ---- linked duplicates (aliases) ----
 
@@ -1808,11 +1867,36 @@ def save_bug_style_from_form(form):
     return True, "Bug style saved - overlays pick it up on their next (re)load."
 
 
+BUG_LOGO_MEDIA_NAME = "bug_logo"
+BUG_LOGO_MAX_BYTES = 5 * 1024 * 1024
+IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _image_type(payload):
+    """MIME type from the file's first bytes (not its name), or None if it isn't a supported image."""
+    for signature, mime in IMAGE_SIGNATURES:
+        if payload.startswith(signature):
+            return mime
+    if payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def get_bug_logo_url():
     """Return the uploaded bug logo URL if one has been configured."""
     if not manager:
         return None
 
+    version = manager.get_media_version(BUG_LOGO_MEDIA_NAME)
+    if version:
+        return url_for("media_file", name=BUG_LOGO_MEDIA_NAME, v=version)
+
+    # Logos uploaded before they were stored in the database
     logo_filename = (manager.get_setting(BUG_LOGO_SETTING_KEY) or "").strip()
     if not logo_filename:
         return None
@@ -1825,36 +1909,51 @@ def get_bug_logo_url():
 
 
 def save_bug_logo_upload(uploaded_file):
-    """Persist an uploaded logo for the Caspar bug overlay."""
+    """
+    Persist an uploaded logo for the Caspar bug overlay. Stored in the database
+    (not the app folder), so it works with read-only mounts and survives redeploys.
+    """
     if not manager:
         return False, "Logo uploads require the scraper manager to be running."
 
     if uploaded_file is None or not uploaded_file.filename:
         return False, "Choose a logo image to upload."
 
-    filename = secure_filename(uploaded_file.filename)
-    if "." not in filename:
-        return False, "Logo file must have an image extension."
+    try:
+        payload = uploaded_file.read(BUG_LOGO_MAX_BYTES + 1)
+    except Exception as e:
+        print(f"Error reading uploaded logo: {e}")
+        return False, "Could not read the uploaded file - try again."
 
-    extension = filename.rsplit(".", 1)[1].lower()
-    if extension not in ALLOWED_BUG_LOGO_EXTENSIONS:
-        return False, "Logo must be a PNG, JPG, JPEG, GIF, or WEBP file."
+    if not payload:
+        return False, "That file is empty."
+    if len(payload) > BUG_LOGO_MAX_BYTES:
+        return False, "Logo must be 5 MB or smaller."
 
-    upload_dir = os.path.join(app.root_path, BUG_LOGO_UPLOAD_DIR)
-    os.makedirs(upload_dir, exist_ok=True)
+    content_type = _image_type(payload)
+    if not content_type:
+        return False, "Logo must be a PNG, JPG, GIF or WEBP image."
 
-    for existing_name in os.listdir(upload_dir):
-        if existing_name.startswith("caspar_bug_logo."):
-            try:
-                os.remove(os.path.join(upload_dir, existing_name))
-            except OSError:
-                pass
-
-    stored_filename = f"caspar_bug_logo.{extension}"
-    uploaded_file.save(os.path.join(upload_dir, stored_filename))
-    manager.save_setting(BUG_LOGO_SETTING_KEY, stored_filename)
-
+    if not manager.save_media(BUG_LOGO_MEDIA_NAME, content_type, payload):
+        return False, "Could not save the logo - check the server logs."
     return True, "Saved bug logo image."
+
+
+@app.route('/media/<name>', methods=['GET'])
+def media_file(name):
+    """Serve an image stored in the database. Links carry ?v=<version>, so it can be cached hard."""
+    if manager is None:
+        return jsonify({"error": "Cache manager not initialized."}), 503
+    found = manager.get_media(name)
+    if not found:
+        return jsonify({"error": "Not found."}), 404
+    content_type, payload, version = found
+    response = make_response(payload)
+    response.headers['Content-Type'] = content_type
+    response.headers['Cache-Control'] = 'public, max-age=31536000, immutable' if request.args.get('v') \
+        else 'no-cache'
+    response.headers['ETag'] = f'"{name}-{version}"'
+    return response
 
 @app.route('/', methods=['GET'])
 def index():
