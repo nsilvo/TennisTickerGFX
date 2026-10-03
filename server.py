@@ -3995,7 +3995,7 @@ def api_player_detail(player_name):
     # Prefer the exact feed casing when we have seen the player in a match
     known = collect_known_players().get(player_key)
     if known and not bio.get('display_name'):
-        display_name = known['name']
+        display_name = _feed_full_name(known['name'])   # "BUSH, Tegan" -> "Tegan Bush"
 
     last_completed = next((r for r in results if r['result']), None)
     lta = parse_lta_stats(bio)
