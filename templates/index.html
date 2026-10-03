@@ -1284,9 +1284,11 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             const courts = j.courts || {};
             const today = new Date().toLocaleDateString('en-CA');
             const blocks = Object.keys(courts).map(court => {
-                const rows = courts[court]
-                    .filter(r => r.source === 'lta' && !r.staged && ['UPCOMING', 'UNSCHEDULED'].includes(r.status))
-                    .slice(0, SCHEDULE_PER_COURT);
+                // Skip what already has a card: explicitly staged matches and the court's next auto-staged one
+                const upcoming = courts[court].filter(r => r.lta_key && ['UPCOMING', 'UNSCHEDULED'].includes(r.status)
+                    && !(r.staged && !r.auto_staged));
+                const firstAuto = upcoming.find(r => r.auto_staged);
+                const rows = upcoming.filter(r => r !== firstAuto).slice(0, SCHEDULE_PER_COURT);
                 if (!rows.length) return '';
                 return `<div class="schedule-court">
                     <div class="schedule-court-name">🎾 ${escHTML(court)}</div>
@@ -1294,7 +1296,9 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                         <span class="sr-time">${escHTML(r.time || '—')}${r.date !== today ? `<div class="sr-event">${escHTML(r.date.slice(5))}</div>` : ''}</span>
                         <span><div class="sr-event">${escHTML([r.event, r.round].filter(Boolean).join(' · '))}</div>
                             <div class="sr-names">${escHTML(r.p1_full_name)} <span style="color:var(--muted-text)">v</span> ${escHTML(r.p2_full_name)}</div></span>
-                        ${court === 'Unassigned'
+                        ${r.auto_staged
+                            ? `<a class="stage-btn" href="/score?match=${encodeURIComponent(r.matchid)}" target="_blank" title="Already staged - open it on the scoring page" style="text-decoration:none">✍️ Score</a>`
+                            : court === 'Unassigned'
                             ? '<a class="stage-btn" href="/schedule" title="No court yet - choose one on the Schedule page" style="text-decoration:none">Pick court</a>'
                             : `<button type="button" class="stage-btn" data-key="${escHTML(r.lta_key)}" data-court="${escHTML(court)}"
                             title="Put this match on ${escHTML(court)} as its upcoming match">Stage</button>`}
@@ -1434,6 +1438,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             }
         }
 
+        // Auto-staged matches (today's whole order of play) only show a card for each
+        // court's next one; the rest are listed under "Next on the LTA order of play"
+        const nextAuto = {};
+        allMatches.filter(m => m.auto_staged && !String(m.matchstatus || '').toUpperCase().includes('PROGRESS')).forEach(m => {
+            const when = `${m.schedule_date || ''} ${m.schedtime || '99:99'}`;
+            if (!nextAuto[m.court] || when < nextAuto[m.court].when) nextAuto[m.court] = { when, id: String(m.matchid) };
+        });
+        const hiddenAuto = new Set(allMatches
+            .filter(m => m.auto_staged && nextAuto[m.court] && nextAuto[m.court].id !== String(m.matchid))
+            .map(m => String(m.matchid)));
+
         // Render all cards into their respective containers
         for (const match of allMatches) {
             const statusUpper = (match.matchstatus || '').toUpperCase();
@@ -1449,7 +1464,7 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
                 if (result && result.isLive) newScores[match.matchid] = result.currentScoreKey;
             } else if (isCompleted) {
                 renderMatchCard(match, completedContainer, true);
-            } else if (isPlanned) {
+            } else if (isPlanned && !hiddenAuto.has(String(match.matchid))) {
                 renderMatchCard(match, plannedContainer, false);
             }
         }

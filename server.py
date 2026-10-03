@@ -2067,6 +2067,14 @@ def config_page():
                 message = msg
             else:
                 error = msg
+        elif form_name == 'lta_auto_stage':
+            lta_stage_prefs["auto"] = request.form.get('auto') == '1'
+            if request.form.get('reset_skipped') == '1':
+                lta_stage_prefs["skipped"] = []
+            save_lta_schedule()
+            notify_schedule_changed()
+            message = ("Auto-staging on: today's matches with a court are ready to score."
+                       if lta_stage_prefs["auto"] else "Auto-staging off: only matches you stage are pre-loaded.")
         elif form_name == 'lta_court_map':
             manual = {}
             for lta_court, tt_court in zip(request.form.getlist('lta_court'), request.form.getlist('tt_court')):
@@ -2107,6 +2115,9 @@ def config_page():
             if lta_schedule.get("fetched_at") else "",
             "error": lta_schedule.get("error") or "",
             "refresh_min": LTA_SCHEDULE_REFRESH_MIN,
+            "auto_stage": lta_stage_prefs.get("auto", True),
+            "auto_count": sum(1 for s in effective_staged().values() if s.get("auto")),
+            "skipped_count": len(lta_stage_prefs.get("skipped") or []),
         },
         lta_courts=[
             {"lta": c, "learned": lta_court_map["learned"].get(c, ""), "manual": lta_court_map["manual"].get(c, "")}
@@ -3004,7 +3015,8 @@ lta_schedule_lock = Lock()
 
 def load_lta_schedule(mgr):
     """Restore the saved schedule and court map (called with the other persisted settings)."""
-    for key, target in (("lta_schedule", lta_schedule), ("lta_court_map", lta_court_map), ("lta_staged", lta_staged)):
+    for key, target in (("lta_schedule", lta_schedule), ("lta_court_map", lta_court_map), ("lta_staged", lta_staged),
+                        ("lta_stage_prefs", lta_stage_prefs)):
         raw = mgr.get_setting(key)
         if raw:
             try:
@@ -3018,10 +3030,12 @@ def load_lta_schedule(mgr):
 
 
 def save_lta_schedule():
+    lta_version[0] += 1   # invalidates the cached staged rows
     if manager:
         manager.save_setting("lta_schedule", json.dumps(lta_schedule))
         manager.save_setting("lta_court_map", json.dumps(lta_court_map))
         manager.save_setting("lta_staged", json.dumps(lta_staged))
+        manager.save_setting("lta_stage_prefs", json.dumps(lta_stage_prefs))
 
 
 def _split_seed(text):
@@ -3251,6 +3265,26 @@ def _lta_side_name(side):
 STAGED_PREFIX = "lta-"
 # {lta_key: {"court": tt_court, "time": "HH:MM"}} - persisted with the schedule
 lta_staged = {}
+# Auto-staging: every match on today's order of play with a court is staged unless the
+# operator unstaged it ("skipped"), so scorers can pick any of them on /score.
+lta_stage_prefs = {"auto": True, "skipped": []}
+lta_version = [0]          # bumped whenever schedule / staging data changes
+_staged_cache = {"key": None, "value": ([], set())}
+
+
+def effective_staged():
+    """{lta_key: {"court", "time", "auto"}}: explicitly staged matches plus today's auto-staged ones."""
+    out = {}
+    if lta_stage_prefs.get("auto", True):
+        today = datetime.now().strftime("%Y-%m-%d")
+        skipped = set(lta_stage_prefs.get("skipped") or [])
+        for e in lta_schedule.get("matches", []):
+            if (e["date"] == today and e["lta_court"] and e["status"] != "COMPLETED" and e["key"] not in skipped
+                    and all(e["sides"][i] for i in (0, 1))):
+                out[e["key"]] = {"court": "", "time": "", "auto": True}
+    for key, stage in lta_staged.items():
+        out[key] = dict(stage, auto=False)
+    return out
 
 
 def _lta_feed_side(side):
@@ -3304,8 +3338,15 @@ def staged_match_rows(feed_rows):
     (or finishes it), or LTA records a result. Returns (rows, covered_feed_ids):
     covered ids are TennisTicker's planned duplicates of staged matches.
     """
-    if not lta_staged:
+    staged_set = effective_staged()
+    if not staged_set:
         return [], set()
+    # Recomputed only when the feed cache, schedule/staging, bios or the date change
+    cache_key = (id(feed_rows), len(feed_rows), lta_version[0], datetime.now().strftime("%Y-%m-%d"),
+                 id(manager._load_player_bios()) if manager else 0, len(manager.player_aliases) if manager else 0,
+                 len(staged_set))
+    if _staged_cache["key"] == cache_key:
+        return _staged_cache["value"]
     entries = {e["key"]: e for e in lta_schedule.get("matches", [])}
     feed_by_id = {str(m.get("matchid")): m for m in feed_rows}
     today = datetime.now().strftime("%Y-%m-%d")
@@ -3313,7 +3354,7 @@ def staged_match_rows(feed_rows):
     tname_default = lta_schedule.get("tournament_name") or next(
         (str(m.get("tname")).strip() for m in feed_rows if str(m.get("tname") or "").strip()), "")
     rows, covered = [], set()
-    for key, stage in list(lta_staged.items()):
+    for key, stage in list(staged_set.items()):
         e = entries.get(key)
         if not e or e["status"] == "COMPLETED":
             continue
@@ -3332,6 +3373,7 @@ def staged_match_rows(feed_rows):
         rows.append({
             "matchid": STAGED_PREFIX + key,
             "staged": True,
+            "auto_staged": bool(stage.get("auto")),
             "lta_key": key,
             "court": court,
             "schedtime": stage.get("time") or e["time"],
@@ -3347,6 +3389,7 @@ def staged_match_rows(feed_rows):
             "sets_played_count": 0, "game1": "", "game2": "", "player2serve": 0,
             "timestamp": int(time.time()),
         })
+    _staged_cache.update(key=cache_key, value=(rows, covered))
     return rows, covered
 
 
@@ -3386,14 +3429,19 @@ def set_lta_staged(keys, staged=True, court=None, time_label=None):
     for key in keys:
         if key not in entries:
             continue
+        skipped = lta_stage_prefs.setdefault("skipped", [])
         if staged:
             if court is not None and court.strip().lower() in ("", "unassigned"):
                 continue
+            if key in skipped:
+                skipped.remove(key)
             current = lta_staged.get(key, {})
             lta_staged[key] = {"court": (court if court is not None else current.get("court", "")).strip(),
                                "time": (time_label if time_label is not None else current.get("time", "")).strip()}
-        elif key in lta_staged:
-            del lta_staged[key]
+        else:
+            lta_staged.pop(key, None)
+            if key not in skipped:
+                skipped.append(key)   # keeps auto-staging from putting it straight back
         changed += 1
     if changed:
         save_lta_schedule()
@@ -3417,6 +3465,7 @@ def schedule_rows():
     feed = {str(m.get("matchid")): m for m in (manager.get_latest_data() if manager else [])}
     bios = manager.get_all_player_bios() if manager else {}
     today = datetime.now().strftime("%Y-%m-%d")
+    staged_set = effective_staged()
     rows, used = [], set()
 
     def feed_fields(fm):
@@ -3471,9 +3520,10 @@ def schedule_rows():
             "matchid": str(fm.get("matchid")) if fm else "",
             "lta_key": e["key"],
             "source": "lta",
-            "staged": e["key"] in lta_staged,
-            "stage_court": lta_staged.get(e["key"], {}).get("court", ""),
-            "stage_time": lta_staged.get(e["key"], {}).get("time", ""),
+            "staged": e["key"] in staged_set,
+            "auto_staged": bool(staged_set.get(e["key"], {}).get("auto")),
+            "stage_court": staged_set.get(e["key"], {}).get("court", ""),
+            "stage_time": staged_set.get(e["key"], {}).get("time", ""),
         }
         if fm:
             used.add(str(fm.get("matchid")))

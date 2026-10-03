@@ -209,7 +209,8 @@ function itemHTML(r){
     const done = r.status === 'COMPLETED';
     const canStage = r.lta_key && !['COMPLETED', 'LIVE'].includes(r.status) && r.source !== 'lta+tennisticker';
     const badges = [`<span class="badge ${esc(r.status)}">${esc(r.status)}</span>`];
-    if (r.staged) badges.push(`<span class="badge staged" title="Staged on ${esc(r.court)}">Staged</span>`);
+    if (r.staged) badges.push(`<span class="badge staged" title="Staged on ${esc(r.court)}">${r.auto_staged ? 'Auto-staged' : 'Staged'}</span>`);
+    if (r.staged && r.matchid) badges.push(`<a class="badge" href="/score?match=${encodeURIComponent(r.matchid)}" target="_blank" style="text-decoration:none">✍️ Score</a>`);
     if (r.source.includes('tennisticker')) badges.push(`<span class="badge tt" title="TennisTicker match ${esc(r.matchid)}">TT ${esc(r.matchid)}</span>`);
     if (r.manual) badges.push('<span class="badge">✍️ Manual</span>');
     if (r.lta_court && r.lta_court !== r.court) badges.push(`<span class="hint">${esc(r.lta_court)}</span>`);

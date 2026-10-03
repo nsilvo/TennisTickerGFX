@@ -303,6 +303,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 .court-map th, .court-map td { text-align: left; padding: 6px 8px; border-top: 1px solid rgba(255,255,255,0.08); }
 .court-map th { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-text, #a0a0b0); }
 .court-map input { margin: 0; }
+.check-row { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-weight: 500; margin: 10px 0; }
+.check-row input { width: auto; margin: 0; }
 </style>
 </head>
 <body>
@@ -391,6 +393,20 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
            {{ lta_schedule_info.linked }} linked to TennisTicker.
            Per-court lists: <code>/api/v1/schedule/court/&lt;court&gt;</code> · all courts: <code>/api/v1/schedule</code>
            (<code>?date=today|upcoming|all|YYYY-MM-DD</code>).</p>
+        {% endif %}
+
+        {% if lta_schedule_info.url %}
+        <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="lta_auto_stage">
+            <label class="check-row"><input type="checkbox" name="auto" value="1" {% if lta_schedule_info.auto_stage %}checked{% endif %}>
+                Auto-stage today's matches that have a court, ready to score on the iPad
+                {% if lta_schedule_info.auto_stage %}<span class="hint">({{ lta_schedule_info.auto_count }} staged now)</span>{% endif %}</label>
+            {% if lta_schedule_info.skipped_count %}
+            <label class="check-row"><input type="checkbox" name="reset_skipped" value="1">
+                Re-stage the {{ lta_schedule_info.skipped_count }} match(es) you unstaged</label>
+            {% endif %}
+            <button class="btn" type="submit">Save</button>
+        </form>
         {% endif %}
 
         {% if lta_courts %}
