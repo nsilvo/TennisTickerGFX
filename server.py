@@ -1465,6 +1465,139 @@ def all_known_matches():
     return matches
 
 
+def _fmt_duration(sec):
+    sec = int(sec or 0)
+    h, m = sec // 3600, sec % 3600 // 60
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def player_event_stats(player_key):
+    """
+    This-event statistics for one player from our own feed data (cache + archive):
+    sets/games, tiebreaks, deciding sets, comebacks, bagels, time on court, plus
+    serve stats from any matches scored courtside on /score.
+    """
+    player_key = manager.resolve_player_key(player_key) if manager else player_key
+    keys = {player_key} | set(manager.aliases_of(player_key) if manager else [])
+    s = {"matches": 0, "wins": 0, "losses": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0,
+         "tiebreaks_won": 0, "tiebreaks_lost": 0, "match_tiebreaks_won": 0, "match_tiebreaks_lost": 0,
+         "deciding_won": 0, "deciding_lost": 0, "straight_sets_wins": 0, "comebacks": 0,
+         "bagels_given": 0, "bagels_received": 0, "time_on_court_sec": 0, "longest_match_sec": 0, "timed_matches": 0}
+    serve = {"aces": 0, "double_faults": 0, "serve_points": 0, "first_serve_in": 0,
+             "break_points_won": 0, "break_points": 0, "matches": 0}
+
+    for m in all_known_matches():
+        side1 = side_player_entries(m.get('player1_full') or m.get('player1'))
+        side2 = side_player_entries(m.get('player2_full') or m.get('player2'))
+        on1 = any(p['key'] in keys for p in side1)
+        on2 = any(p['key'] in keys for p in side2)
+        if not (on1 or on2):
+            continue
+        mine_idx = 1 if on1 else 2
+
+        # Serve stats from courtside scoring, if this match was scored on /score
+        state = manager.manual_scores.get(str(m.get('matchid'))) if manager else None
+        if state and state.get("log"):
+            st = manual_scoring.stats(state).get(mine_idx) or {}
+            for k in ("aces", "double_faults", "serve_points", "first_serve_in", "break_points_won", "break_points"):
+                serve[k] += st.get(k, 0)
+            serve["matches"] += 1
+
+        winner_code = str(m.get('winner') or '').strip()
+        if classify_match_status(m) != "COMPLETED" or winner_code not in ("1", "2"):
+            continue
+        won = winner_code == str(mine_idx)
+        s["matches"] += 1
+        s["wins" if won else "losses"] += 1
+
+        set_results = []
+        for i in range(1, min(int(m.get('sets_played_count') or 0), MAX_SETS) + 1):
+            try:
+                a, b = int(m.get(f'set{i}_p1') or 0), int(m.get(f'set{i}_p2') or 0)
+            except (TypeError, ValueError):
+                continue
+            if a == 0 and b == 0:
+                continue
+            mine, theirs = (a, b) if mine_idx == 1 else (b, a)
+            set_won = mine > theirs
+            set_results.append(set_won)
+            s["sets_won" if set_won else "sets_lost"] += 1
+            if max(mine, theirs) >= 10:            # match tiebreak played as the deciding "set"
+                s["match_tiebreaks_won" if set_won else "match_tiebreaks_lost"] += 1
+                continue
+            s["games_won"] += mine
+            s["games_lost"] += theirs
+            if str(m.get(f'set{i}_tb') or '').strip() or {mine, theirs} == {7, 6}:
+                s["tiebreaks_won" if set_won else "tiebreaks_lost"] += 1
+            if (mine, theirs) == (6, 0):
+                s["bagels_given"] += 1
+            elif (mine, theirs) == (0, 6):
+                s["bagels_received"] += 1
+
+        if set_results:
+            lost_sets = set_results.count(False)
+            if won and lost_sets == 0:
+                s["straight_sets_wins"] += 1
+            if won and not set_results[0]:
+                s["comebacks"] += 1
+            if lost_sets and set_results.count(True) and abs(set_results.count(True) - lost_sets) == 1 \
+                    and len(set_results) >= 3:
+                s["deciding_won" if won else "deciding_lost"] += 1
+
+        history = manager.get_match_history(str(m.get('matchid'))) if manager else []
+        if len(history) >= 2:
+            dur = history[-1]["ts"] - history[0]["ts"]
+            if 0 < dur < 6 * 3600:
+                s["time_on_court_sec"] += dur
+                s["longest_match_sec"] = max(s["longest_match_sec"], dur)
+                s["timed_matches"] += 1
+
+    games = s["games_won"] + s["games_lost"]
+    s["games_pct"] = round(100 * s["games_won"] / games) if games else None
+    s["avg_match_sec"] = s["time_on_court_sec"] // s["timed_matches"] if s["timed_matches"] else 0
+    if serve["matches"]:
+        serve["first_serve_pct"] = round(100 * serve["first_serve_in"] / serve["serve_points"]) if serve["serve_points"] else None
+        s["serve"] = serve
+    return s
+
+
+def event_talking_points(s, name=""):
+    """Commentator sentences from this-event stats (most newsworthy first)."""
+    first = (name or "").split(" ")[0] or "They"
+    points = []
+    if s["matches"] >= 1 and s["losses"] == 0 and s["sets_lost"] == 0 and s["wins"]:
+        points.append(f"Yet to drop a set this event ({s['wins']} win{'s' if s['wins'] != 1 else ''}).")
+    if s["wins"] and s["games_lost"] <= 4 * s["matches"] and s["games_won"] + s["games_lost"] >= 12:
+        points.append(f"Has dropped only {s['games_lost']} games in {s['matches']} match{'es' if s['matches'] != 1 else ''} this event.")
+    elif s["games_pct"] is not None and s["matches"]:
+        points.append(f"Won {s['games_pct']}% of games this event ({s['games_won']}-{s['games_lost']}).")
+    if s["comebacks"]:
+        points.append(f"Has come from a set down to win {s['comebacks']} time{'s' if s['comebacks'] != 1 else ''} this event.")
+    deciders = s["deciding_won"] + s["deciding_lost"]
+    mtb = s["match_tiebreaks_won"] + s["match_tiebreaks_lost"]
+    if deciders and deciders != mtb:   # padel deciders are match tiebreaks: reported below
+        points.append(f"{s['deciding_won']}-{s['deciding_lost']} in deciding sets this event.")
+    if mtb:
+        points.append(f"{s['match_tiebreaks_won']}-{s['match_tiebreaks_lost']} in match tiebreaks this event.")
+    tbs = s["tiebreaks_won"] + s["tiebreaks_lost"]
+    if tbs:
+        points.append(f"{s['tiebreaks_won']}-{s['tiebreaks_lost']} in tiebreaks this event.")
+    if s["bagels_given"]:
+        points.append(f"Handed out {s['bagels_given']} bagel{'s' if s['bagels_given'] != 1 else ''} (6-0 set) this event.")
+    if s["timed_matches"]:
+        points.append(f"{first} has spent {_fmt_duration(s['time_on_court_sec'])} on court this event"
+                      + (f"; longest match {_fmt_duration(s['longest_match_sec'])}." if s["timed_matches"] > 1 else "."))
+    sv = s.get("serve")
+    if sv and sv["serve_points"] >= 10:
+        bits = [f"{sv['aces']} ace{'s' if sv['aces'] != 1 else ''}", f"{sv['double_faults']} double fault{'s' if sv['double_faults'] != 1 else ''}"]
+        if sv.get("first_serve_pct") is not None:
+            bits.append(f"{sv['first_serve_pct']}% first serves in")
+        if sv["break_points"]:
+            bits.append(f"{sv['break_points_won']}/{sv['break_points']} break points converted")
+        points.append("Courtside stats: " + ", ".join(bits) + ".")
+    return points
+
+
 def compute_player_record(player_key):
     """
     Tournament W/L and per-match results for one player, computed from our
@@ -3722,6 +3855,7 @@ def api_player_detail(player_name):
     player_key = manager.resolve_player_key(player_key)
     bio = manager.get_player_bio(player_key) or {}
     wins, losses, results = compute_player_record(player_key)
+    event_stats = player_event_stats(player_key)
 
     if not bio and not results:
         return jsonify({"error": f"No data for player '{player_key}'."}), 404
@@ -3747,7 +3881,9 @@ def api_player_detail(player_name):
         "notes": bio.get('notes') or '',
         "lta_url": bio.get('lta_url') or '',
         "lta": lta,
-        "talking_points": lta_talking_points(lta, display_name),
+        "event_stats": event_stats,
+        # This-event points first (most relevant live), then the LTA career points
+        "talking_points": event_talking_points(event_stats, display_name) + lta_talking_points(lta, display_name),
         "tournament_wins": wins,
         "tournament_losses": losses,
         "tournament_record": f"{wins}-{losses}",

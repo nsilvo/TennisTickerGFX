@@ -241,6 +241,14 @@ body.screen-mode .score-card .game-cell { font-size: 2rem; min-width: 70px; }
 body.screen-mode .score-card .score-table td { padding: 12px 6px; }
 body.screen-mode .chart-svg { max-height: 250px; }
 body.screen-mode details.data-table { display: none; }
+.clock-card { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 10px; align-items: stretch; }
+.clock-main { display: flex; flex-direction: column; justify-content: center; }
+.clock-big { font-size: 2.2rem; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; color: var(--text-light); line-height: 1.1; }
+.clock-tile { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 8px 10px; }
+.clock-tile .v { font-size: 1.3rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.clock-lbl { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-text); }
+.clock-foot { grid-column: 1 / -1; font-size: 0.78rem; color: var(--muted-text); }
+@media (max-width: 700px){ .clock-card { grid-template-columns: 1fr 1fr; } .clock-main { grid-column: 1 / -1; } }
 .section-label {
     font-size: 0.68rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
     color: var(--muted-text); margin-bottom: 8px; display: flex; justify-content: space-between; gap: 10px;
@@ -804,12 +812,85 @@ function pointState(pt, base){
     };
 }
 
-// Elapsed match time "h:mm" (or "m:ss" under a minute in)
+// Match time: "m:ss" under an hour, "h:mm:ss" once it goes past an hour
 function fmtElapsed(sec){
     sec = Math.max(0, Math.round(sec));
-    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
-    return `${h}:${String(m).padStart(2, '0')}`;
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    const mmss = `${h ? String(m).padStart(2, '0') : m}:${String(s).padStart(2, '0')}`;
+    return h ? `${h}:${mmss}` : mmss;
 }
+
+// ====================================================================
+// Live match clock (Match stats tab): from the recorded score history
+// ====================================================================
+let clockCache = { n: -1, info: null };
+
+function clockInfo(){
+    if (!histLoaded || histPoints.length === 0) return null;
+    if (clockCache.n === histPoints.length && clockCache.id === histMatchId) return clockCache.info;
+    // Lightweight per-point state: total games and completed sets
+    const states = histPoints.map(p => {
+        const sets = stripTB(p.score) ? stripTB(p.score).split(/\s+/).map(s => s.split('-').map(n => parseInt(n, 10) || 0)) : [];
+        return {
+            ts: p.ts,
+            games: sets.reduce((a, [x, y]) => a + (Math.max(x, y) >= 10 ? 0 : x + y), 0),
+            sets: sets.filter(([a, b]) => isSetWon(a, b) || isSetWon(b, a)).length
+        };
+    });
+    let lastGame = null, lastSet = null, longest = 0, prevGameTs = states[0].ts, longestAt = '';
+    for (let i = 1; i < states.length; i++){
+        if (states[i].games !== states[i - 1].games){
+            const len = states[i].ts - prevGameTs;
+            if (len > longest){ longest = len; longestAt = stripTB(histPoints[i].score); }
+            prevGameTs = states[i].ts;
+            lastGame = states[i].ts;
+        }
+        if (states[i].sets > states[i - 1].sets) lastSet = states[i].ts;
+    }
+    const games = states[states.length - 1].games;
+    const info = {
+        start: states[0].ts, lastPoint: states[states.length - 1].ts, lastGame, lastSet,
+        sets: states[states.length - 1].sets,
+        avgGame: games ? ((lastGame || states[0].ts) - states[0].ts) / games : 0,
+        longest, longestAt
+    };
+    clockCache = { n: histPoints.length, id: histMatchId, info };
+    return info;
+}
+
+function clockCardHTML(m){
+    if (!FOCUS_COURT || String(m.matchid) !== String(histMatchId)) return '';
+    return `<div class="card clock-card" id="clock-card">
+        <div class="clock-main"><span class="clock-lbl">Match time</span><span class="clock-big" id="clk-match">–</span></div>
+        <div class="clock-tile"><div class="clock-lbl">Since last point</div><div class="v" id="clk-point">–</div></div>
+        <div class="clock-tile"><div class="clock-lbl">Since last game</div><div class="v" id="clk-game">–</div></div>
+        <div class="clock-tile"><div class="clock-lbl" id="clk-set-lbl">Since last set</div><div class="v" id="clk-set">–</div></div>
+        <div class="clock-foot" id="clk-foot"></div>
+    </div>`;
+}
+
+// Runs every second; only touches the clock's text so nothing else re-renders
+function updateClock(){
+    const card = document.getElementById('clock-card');
+    if (!card) return;
+    const info = clockInfo();
+    const set = (id, v) => { const el = document.getElementById(id); if (el && el.textContent !== v) el.textContent = v; };
+    if (!info){ set('clk-match', '–'); set('clk-foot', 'Clock starts with the first recorded point.'); return; }
+    const cur = pickCurrent(matchesForCourt(FOCUS_COURT));
+    const finished = cur && statusBucket(cur) === 'COMPLETED';
+    const now = finished ? info.lastPoint : Date.now() / 1000;
+    set('clk-match', fmtElapsed(now - info.start) + (finished ? ' ✔' : ''));
+    set('clk-point', fmtElapsed(now - info.lastPoint));
+    set('clk-game', info.lastGame ? fmtElapsed(now - info.lastGame) : `${fmtElapsed(now - info.start)} (1st game)`);
+    set('clk-set-lbl', info.lastSet ? 'Since last set' : 'Set 1 running');
+    set('clk-set', info.lastSet ? fmtElapsed(now - info.lastSet) : fmtElapsed(now - info.start));
+    const foot = [];
+    if (info.avgGame) foot.push(`Average game ${fmtElapsed(info.avgGame)}`);
+    if (info.longest) foot.push(`longest game ${fmtElapsed(info.longest)}${info.longestAt ? ` (to ${info.longestAt})` : ''}`);
+    foot.push(finished ? 'match finished' : 'timed from the first recorded point');
+    set('clk-foot', foot.join(' · '));
+}
+setInterval(updateClock, 1000);
 
 // Tick spacing (minutes) giving at most ~6 labels across the match so far
 function timeTickStep(spanSec){
@@ -1256,6 +1337,17 @@ function playerPanelHTML(p, who){
     const titles = lta.titles || [];
     const nWon = titles.filter(t => t.result === 'Winner').length;
     const nFinal = titles.length - nWon;
+    // This event, from our own match data
+    const es = d.event_stats || {};
+    const eventChips = [];
+    if (es.matches){
+        eventChips.push(`<span class="chip">Event <strong>${es.wins}-${es.losses}</strong></span>`);
+        eventChips.push(`<span class="chip">Sets <strong>${es.sets_won}-${es.sets_lost}</strong></span>`);
+        if (es.games_pct != null) eventChips.push(`<span class="chip">Games <strong>${es.games_pct}%</strong></span>`);
+        if (es.tiebreaks_won + es.tiebreaks_lost) eventChips.push(`<span class="chip">TB <strong>${es.tiebreaks_won}-${es.tiebreaks_lost}</strong></span>`);
+        if (es.match_tiebreaks_won + es.match_tiebreaks_lost) eventChips.push(`<span class="chip">MTB <strong>${es.match_tiebreaks_won}-${es.match_tiebreaks_lost}</strong></span>`);
+        if (es.time_on_court_sec) eventChips.push(`<span class="chip">On court <strong>${fmtElapsed(es.time_on_court_sec)}</strong></span>`);
+    }
     const chips = [];
     if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
     if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
@@ -1279,6 +1371,7 @@ function playerPanelHTML(p, who){
         </div>
         <div class="ppanel-stats">
             ${chips.length ? `<div class="ppanel-row" style="gap:6px">${chips.join('')}</div>` : ''}
+            ${eventChips.length ? `<div class="ppanel-row" style="gap:6px" title="This event, from our own results">${eventChips.join('')}</div>` : ''}
             ${wlLineHTML('Career', recordOf(lta, 'total', 'career'))}
             ${wlLineHTML(String(season), recordOf(lta, 'total', 'year'))}
             ${formHTML}
@@ -1556,6 +1649,7 @@ function focusDashboardHTML(court, mode){
                     ${predictorHTML(current)}
                     ${derivedStatsHTML(current)}
                 </div>
+                ${clockCardHTML(current)}
                 ${extras ? `<div class="card">${extras}</div>` : ''}
             </div>
             <div class="dash-col">
@@ -1628,6 +1722,7 @@ function render(){
     document.body.classList.toggle('screen-mode', mode === 'screen');
     document.body.classList.toggle('mobile-mode', mode === 'mobile');
 
+    setTimeout(updateClock, 0);
     if (FOCUS_COURT){
         // Live updates re-render every few seconds; keep each player's text where the commentator scrolled it
         const scrolls = {};
