@@ -99,6 +99,19 @@ textarea { min-height: 80px; resize: vertical; }
 .api-line a:hover { text-decoration: underline; }
 
 .bulk-card { margin-top: 20px; }
+.dup-card { margin-bottom: 20px; border-color: rgba(255,193,7,0.45); }
+.dup-group { border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.dup-names { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.dup-name { font-weight: 600; }
+.dup-name .country { font-size: 0.72rem; color: var(--muted-text); font-weight: 400; }
+.dup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dup-actions form { margin: 0; }
+.btn.small { margin-top: 0; padding: 6px 12px; font-size: 0.72rem; }
+.btn.ghost { border-color: var(--border-soft); background: transparent; color: var(--muted-text); }
+.link-panel { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; }
+.alias { display: inline-flex; align-items: center; gap: 8px; margin: 4px 8px 4px 0; padding: 3px 4px 3px 10px; border-radius: 999px; border: 1px solid var(--border-soft); font-size: 0.82rem; }
+.alias form { margin: 0; }
+.alias button { background: none; border: 0; color: var(--error-color); cursor: pointer; font-size: 0.78rem; }
 .bulk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 24px; margin-top: 10px; }
 .bulk-row { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; }
 .bulk-feed-name { font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -137,6 +150,39 @@ textarea { min-height: 80px; resize: vertical; }
 
     {% if message %}<div class="notice success">{{ message }}</div>{% endif %}
     {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+    {% if duplicates %}
+    <div class="card dup-card">
+        <h3>Possible duplicates ({{ duplicates|length }})</h3>
+        <p class="hint">These entries look like the same person (same surname and initial, or the same full name).
+           Choose which one to keep: the others are linked to it, their details fill any gaps, and every screen,
+           graphic and record treats them as one player. Links can be undone from the player's editor.</p>
+        {% for g in duplicates %}
+        <div class="dup-group">
+            <div class="dup-names">
+                {% for p in g.players %}
+                <span class="dup-name">{{ p.bio.display_name or p.name }} <span class="country">{{ p.key }}{% if p.has_bio %} · bio{% endif %}</span></span>
+                {% endfor %}
+            </div>
+            <div class="dup-actions">
+                {% for keep in g.players %}
+                <form method="post" action="/players">
+                    <input type="hidden" name="form_name" value="link_players">
+                    <input type="hidden" name="keep_key" value="{{ keep.key }}">
+                    {% for p in g.players %}{% if p.key != keep.key %}<input type="hidden" name="duplicate_key" value="{{ p.key }}">{% endif %}{% endfor %}
+                    <button class="btn small" type="submit">Keep {{ keep.bio.display_name or keep.name }} ({{ keep.key }})</button>
+                </form>
+                {% endfor %}
+                <form method="post" action="/players">
+                    <input type="hidden" name="form_name" value="dismiss_duplicate">
+                    <input type="hidden" name="group" value="{{ g.id }}">
+                    <button class="btn small ghost" type="submit">Different people</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="layout">
         <div class="card">
@@ -183,8 +229,19 @@ textarea { min-height: 80px; resize: vertical; }
                 <button class="btn" type="submit">💾 Save Player</button>
             </form>
             <div class="api-line" id="api-line"></div>
+            <div id="link-panel" class="link-panel" hidden>
+                <label>Linked entries <span class="label-hint">(other names this player appears under)</span></label>
+                <div id="alias-list"></div>
+                <form method="post" action="/players" class="import-row">
+                    <input type="hidden" name="form_name" value="link_players">
+                    <input type="hidden" name="keep_key" id="link-keep">
+                    <input type="text" name="duplicate_key" id="link-dup" list="player-keys" placeholder="Link a duplicate entry into this player…">
+                    <button class="btn" type="submit" style="margin-top:0">🔗 Link</button>
+                </form>
+            </div>
         </div>
     </div>
+    <datalist id="player-keys">{% for p in players %}<option value="{{ p.key }}">{{ p.bio.display_name or p.name }}</option>{% endfor %}</datalist>
 
     <div class="card bulk-card">
         <h3>Import / export bios</h3>
@@ -268,6 +325,14 @@ function selectPlayer(key){
     document.getElementById('lta-search-line').innerHTML = searchName
         ? `Find the profile: <a href="https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(searchName)}" target="_blank" rel="noopener">search "${esc(searchName)}" on LTA ↗</a>, then paste its URL above.`
         : '';
+    // Linked duplicate entries for this player
+    document.getElementById('link-panel').hidden = false;
+    document.getElementById('link-keep').value = p.key;
+    document.getElementById('link-dup').value = '';
+    document.getElementById('alias-list').innerHTML = (p.aliases || []).map(a => `<span class="alias">${esc(a)}
+        <form method="post" action="/players"><input type="hidden" name="form_name" value="unlink_player">
+        <input type="hidden" name="alias_key" value="${esc(a)}"><button type="submit" title="Unlink">✕ unlink</button></form></span>`).join('')
+        || '<span class="hint">None.</span>';
     const apiUrl = `/api/v1/player/${encodeURIComponent(p.key)}`;
     document.getElementById('api-line').innerHTML =
         `API: <a href="${apiUrl}" target="_blank">${location.origin}${apiUrl}</a>`;

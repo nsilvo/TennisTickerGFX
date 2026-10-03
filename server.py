@@ -108,6 +108,7 @@ class XMLCacheManager:
         self.create_tables()
         # Commentator manual scoring: {matchid: state}; active entries override the feed score
         self.manual_scores = self.load_manual_scores()
+        self.player_aliases = self.load_player_aliases()
         # When the feed last changed each match's score (in memory; drives feed-vs-manual freshness)
         self.feed_score_ts = {}
 
@@ -296,6 +297,14 @@ class XMLCacheManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_match_history_mid ON match_history (matchid, ts);")
 
+        # Linked duplicate player entries: alias_key -> the player_key that holds the bio
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS player_aliases (
+                alias_key TEXT PRIMARY KEY,
+                player_key TEXT
+            );
+        """)
+
         # Commentator manual scoring state (JSON from manual_scoring.py), one row per match
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS manual_scores (
@@ -475,8 +484,95 @@ class XMLCacheManager:
     PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
                          "lta_stats")
 
+    # ---- linked duplicates (aliases) ----
+
+    def load_player_aliases(self):
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT alias_key, player_key FROM player_aliases")
+                return {a: k for a, k in cursor.fetchall()}
+            except Exception as e:
+                print(f"Error loading player aliases: {e}")
+                return {}
+
+    def resolve_player_key(self, key):
+        """The key that holds this player's bio (follows links from duplicate entries)."""
+        seen = set()
+        while key in self.player_aliases and key not in seen:
+            seen.add(key)
+            key = self.player_aliases[key]
+        return key
+
+    def aliases_of(self, key):
+        return sorted(a for a in self.player_aliases if self.resolve_player_key(a) == key)
+
+    def link_players(self, duplicate_key, keep_key):
+        """
+        Merge `duplicate_key` into `keep_key`: empty bio fields are filled from the
+        duplicate, the duplicate's bio row is removed, and the duplicate key becomes an
+        alias so every lookup lands on the kept player. Returns (ok, message).
+        """
+        keep_key = self.resolve_player_key(keep_key)
+        duplicate_key = self.resolve_player_key(duplicate_key)
+        if not keep_key or not duplicate_key or keep_key == duplicate_key:
+            return False, "Choose two different players to link."
+        keep = self.get_player_bio(keep_key) or {}
+        dup = self.get_player_bio(duplicate_key) or {}
+        merged = {c: (keep.get(c) or dup.get(c) or '') for c in self.PLAYER_BIO_FIELDS}
+        if not merged.get('display_name'):
+            merged['display_name'] = keep_key.title()
+        self.save_player_bio(keep_key, merged)
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(f"DELETE FROM player_bios WHERE player_key={ph}", (duplicate_key,))
+                # The duplicate and anything already linked to it now point at the kept player
+                cursor.execute(f"UPDATE player_aliases SET player_key={ph} WHERE player_key={ph}", (keep_key, duplicate_key))
+                cursor.execute(f"""
+                    INSERT INTO player_aliases (alias_key, player_key) VALUES ({ph}, {ph})
+                    ON CONFLICT (alias_key) DO UPDATE SET player_key=excluded.player_key
+                """, (duplicate_key, keep_key))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error linking players {duplicate_key} -> {keep_key}: {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return False, "Could not link the players - check the server logs."
+        for alias, target in list(self.player_aliases.items()):
+            if target == duplicate_key:
+                self.player_aliases[alias] = keep_key
+        self.player_aliases[duplicate_key] = keep_key
+        self._bios_cache = None
+        return True, f"Linked {duplicate_key} to {merged['display_name']}."
+
+    def unlink_player(self, alias_key):
+        """Undo a link: the alias becomes its own (bio-less) player again."""
+        if alias_key not in self.player_aliases:
+            return False, "That entry isn't linked."
+        ph = "?" if self.param_style == 'sqlite' else "%s"
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(f"DELETE FROM player_aliases WHERE alias_key={ph}", (alias_key,))
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error unlinking {alias_key}: {e}")
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return False, "Could not unlink - check the server logs."
+        self.player_aliases.pop(alias_key, None)
+        self._bios_cache = None
+        return True, f"Unlinked {alias_key}."
+
     def get_player_bio(self, player_key):
-        """Return the saved bio dict for a player key, or None."""
+        """Return the saved bio dict for a player key (following links), or None."""
+        player_key = self.resolve_player_key(player_key)
         with self.db_lock:
             cursor = self.conn.cursor()
             try:
@@ -493,8 +589,23 @@ class XMLCacheManager:
                 print(f"Error reading player bio '{player_key}': {e}")
                 return None
 
-    def get_all_player_bios(self):
-        """Return every saved player bio keyed by player_key (cached until a bio is saved)."""
+    def get_all_player_bios(self, include_aliases=True):
+        """
+        Every saved bio keyed by player_key (cached until a bio is saved). Linked
+        duplicate keys map to the kept player's bio so lookups by any key work;
+        pass include_aliases=False when listing or exporting players.
+        """
+        bios = self._load_player_bios()
+        if not include_aliases or not self.player_aliases:
+            return bios
+        with_aliases = dict(bios)
+        for alias in self.player_aliases:
+            target = bios.get(self.resolve_player_key(alias))
+            if target:
+                with_aliases.setdefault(alias, target)
+        return with_aliases
+
+    def _load_player_bios(self):
         cached = getattr(self, "_bios_cache", None)
         if cached is not None:
             return cached
@@ -511,6 +622,7 @@ class XMLCacheManager:
 
     def save_player_bio(self, player_key, fields):
         self._bios_cache = None
+        player_key = self.resolve_player_key(player_key)
         """Insert or update a player bio. `fields` maps bio column -> value."""
         values = {col: str(fields.get(col) or '').strip() for col in self.PLAYER_BIO_FIELDS}
         with self.db_lock:
@@ -1292,6 +1404,8 @@ def compute_player_record(player_key):
     results = []
 
     bios = manager.get_all_player_bios() if manager else {}
+    player_key = manager.resolve_player_key(player_key) if manager else player_key
+    keys = {player_key} | set(manager.aliases_of(player_key) if manager else [])
 
     def display(p):
         bio = bios.get(p['key'])
@@ -1300,8 +1414,8 @@ def compute_player_record(player_key):
     for m in all_known_matches():
         side1 = side_player_entries(m.get('player1_full') or m.get('player1'))
         side2 = side_player_entries(m.get('player2_full') or m.get('player2'))
-        on1 = any(p['key'] == player_key for p in side1)
-        on2 = any(p['key'] == player_key for p in side2)
+        on1 = any(p['key'] in keys for p in side1)
+        on2 = any(p['key'] in keys for p in side2)
         if not (on1 or on2):
             continue
 
@@ -1324,7 +1438,7 @@ def compute_player_record(player_key):
             "court": str(m.get('court') or ''),
             "status": status,
             "result": result,
-            "partner": " / ".join(display(p) for p in own_side if p['key'] != player_key),
+            "partner": " / ".join(display(p) for p in own_side if p['key'] not in keys),
             "opponent": " / ".join(display(p) for p in opp_side) or "TBC",
             "score": match_score_line(m),
             "schedtime": str(m.get('schedtime') or ''),
@@ -1347,14 +1461,15 @@ def collect_known_players():
             for p in side_player_entries(raw):
                 if p['key'] in ('TBC', 'BYE', ''):
                     continue
-                existing = players.get(p['key'])
+                key = manager.resolve_player_key(p['key']) if manager else p['key']
+                existing = players.get(key)
                 if not existing:
-                    players[p['key']] = {"name": p['name'], "country": p['country'], "has_bio": False}
+                    players[key] = {"name": p['name'], "country": p['country'], "has_bio": False}
                 elif not existing['country'] and p['country']:
                     existing['country'] = p['country']
 
     if manager:
-        for key, bio in manager.get_all_player_bios().items():
+        for key, bio in manager.get_all_player_bios(include_aliases=False).items():
             entry = players.setdefault(key, {"name": bio.get('display_name') or key, "country": bio.get('country') or '', "has_bio": True})
             entry['has_bio'] = True
             if bio.get('display_name'):
@@ -2636,7 +2751,8 @@ def merge_bio_rows(rows, overwrite=False):
     set, only empty fields are filled so staff-entered text is never lost.
     Returns a summary string.
     """
-    known_keys = set(collect_known_players())
+    # Linked duplicate keys still match, and resolve to the player they were linked to
+    known_keys = set(collect_known_players()) | set(manager.player_aliases)
 
     # A surname + initial shared by two rows can't be matched safely
     short_counts = {}
@@ -2663,6 +2779,7 @@ def merge_bio_rows(rows, overwrite=False):
         if not key:
             skipped.append(f"{label or 'row'} (no name)")
             continue
+        key = manager.resolve_player_key(key)
         if key in claimed:
             skipped.append(f"{label} (same feed name as {claimed[key]})")
             continue
@@ -2752,7 +2869,7 @@ def players_export_csv():
     """Download every saved bio as CSV (backup, or to edit and re-upload)."""
     if manager is None:
         return jsonify({"error": "Cache manager not initialized."}), 503
-    rows = [dict(bio, player_key=key) for key, bio in sorted(manager.get_all_player_bios().items())]
+    rows = [dict(bio, player_key=key) for key, bio in sorted(manager.get_all_player_bios(include_aliases=False).items())]
     response = make_response(bio_rows_to_csv(rows))
     response.headers['Content-Type'] = 'text/csv; charset=utf-8'
     response.headers['Content-Disposition'] = 'attachment; filename=player_bios.csv'
@@ -3354,6 +3471,7 @@ def api_player_detail(player_name):
     if not player_key:
         return jsonify({"error": "Player name required."}), 400
 
+    player_key = manager.resolve_player_key(player_key)
     bio = manager.get_player_bio(player_key) or {}
     wins, losses, results = compute_player_record(player_key)
 
@@ -3393,6 +3511,39 @@ def api_player_detail(player_name):
     })
 
 
+def possible_duplicate_players(player_rows):
+    """
+    Entries that look like the same person: same surname + first initial
+    ("BYRNE J" / "John Byrne") or the same saved full name. Groups marked as
+    different people on /players are left out.
+    """
+    dismissed = set(json.loads(manager.get_setting('player_duplicates_dismissed') or '[]')) if manager else set()
+    groups = {}
+    for row in player_rows:
+        names = {row["key"], row["name"], (row["bio"] or {}).get("display_name") or ""}
+        sigs = set()
+        for n in names:
+            if not n or n.upper() in ("TBC", "BYE"):
+                continue
+            surname, initial = _feed_name_key(n)
+            if surname and initial:
+                sigs.add(f"{surname}|{initial}")
+        for sig in sigs:
+            groups.setdefault(sig, {})[row["key"]] = row
+    seen, out = set(), []
+    for sig, members in groups.items():
+        if len(members) < 2:
+            continue
+        keys = tuple(sorted(members))
+        group_id = "+".join(keys)
+        if keys in seen or group_id in dismissed:
+            continue
+        seen.add(keys)
+        rows = sorted(members.values(), key=lambda r: (not r["has_bio"], -len([v for v in (r["bio"] or {}).values() if v])))
+        out.append({"id": group_id, "players": rows})
+    return out
+
+
 @app.route('/players', methods=['GET', 'POST'])
 def players_page():
     """Player bio editor: production staff maintain commentator spotter data."""
@@ -3402,7 +3553,26 @@ def players_page():
     if request.method == 'POST':
         form_name = (request.form.get('form_name') or '').strip().lower()
 
-        if form_name == 'bulk_names':
+        if form_name in ('link_players', 'unlink_player', 'dismiss_duplicate') and manager is None:
+            error = "Database not ready yet - try again shortly."
+        elif form_name == 'link_players':
+            keep = normalize_player_key(request.form.get('keep_key'))
+            results = [manager.link_players(normalize_player_key(dup), keep)
+                       for dup in request.form.getlist('duplicate_key') if dup.strip()]
+            failed = [msg for ok, msg in results if not ok]
+            if failed or not results:
+                error = " ".join(failed) or "Choose a player to link."
+            else:
+                message = " ".join(msg for _ok, msg in results)
+        elif form_name == 'unlink_player':
+            ok, msg = manager.unlink_player(normalize_player_key(request.form.get('alias_key')))
+            message, error = (msg, None) if ok else (None, msg)
+        elif form_name == 'dismiss_duplicate':
+            dismissed = set(json.loads(manager.get_setting('player_duplicates_dismissed') or '[]'))
+            dismissed.add(request.form.get('group', ''))
+            manager.save_setting('player_duplicates_dismissed', json.dumps(sorted(dismissed)))
+            message = "Marked as different players."
+        elif form_name == 'bulk_names':
             # Bulk full-name entry: save display names without touching other bio fields
             if manager is None:
                 error = "Database not ready yet - try again shortly."
@@ -3461,7 +3631,8 @@ def players_page():
             "name": info["name"],
             "country": info["country"],
             "has_bio": info["has_bio"],
-            "bio": bios.get(key) or {}
+            "bio": bios.get(key) or {},
+            "aliases": manager.aliases_of(key) if manager else [],
         }
         for key, info in sorted(players.items(), key=lambda kv: kv[1]["name"].upper())
     ]
@@ -3469,6 +3640,7 @@ def players_page():
     response = make_response(render_template(
         'players.html',
         players=player_rows,
+        duplicates=possible_duplicate_players(player_rows),
         message=message,
         error=error
     ))
