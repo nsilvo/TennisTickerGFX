@@ -1861,9 +1861,9 @@ def get_live_stream_config():
             stream_layout = layout_raw
 
         for idx in range(MAX_STREAM_SLOTS):
-            saved_court = (settings.get(f"stream_court_{idx + 1}") or "").strip()
-            if saved_court:
-                stream_courts[idx] = saved_court
+            # A saved blank means "No court assigned" - it must not fall back to the default court
+            if f"stream_court_{idx + 1}" in settings:
+                stream_courts[idx] = (settings.get(f"stream_court_{idx + 1}") or "").strip()
             saved_url = (settings.get(f"stream_url_{idx + 1}") or "").strip()
             if saved_url:
                 stream_urls[idx] = saved_url
@@ -1878,6 +1878,26 @@ def get_live_stream_config():
         "stream_courts": stream_courts,
         "stream_urls": stream_urls,
     }
+
+
+def pinned_courts_for_display():
+    """
+    Courts listed first on Commentary / Schedule / API Links: the courts of the live
+    stream panels in use, resolved to real court names ("1" -> "LTA-OC-1", "LTA-IC-1").
+    Pins with no matching court are ignored; Config can switch pinning off.
+    """
+    if manager is None or (manager.get_setting("pin_stream_courts") or "1") == "0":
+        return []
+    config = get_live_stream_config()
+    numbers = [c for c in config["stream_courts"][:config["stream_count"]] if c]
+    courts = sorted({str(m.get("court") or "").strip() for m in manager.get_latest_data() if m.get("court")},
+                    key=court_sort_key)
+    pinned = []
+    for n in numbers:
+        for c in courts:
+            if (c == n or normalize_court_number(c) == n) and c not in pinned:
+                pinned.append(c)
+    return pinned
 
 
 def get_available_court_numbers():
@@ -2192,10 +2212,7 @@ def results():
 @app.route('/api_links')
 def api_links_page():
     """Copy/paste API and overlay links, grouped per court (pinned courts shown first)."""
-    stream_config = get_live_stream_config()
-    pinned_courts = [c for c in stream_config["stream_courts"] if c]
-
-    response = make_response(render_template('api_links.html', pinned_courts=pinned_courts))
+    response = make_response(render_template('api_links.html', pinned_courts=pinned_courts_for_display()))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -2207,8 +2224,7 @@ def stats_page():
     """Commentary screen: live match stats for commentators, optionally focused on one court."""
     court = (request.args.get('court') or '').strip()
 
-    stream_config = get_live_stream_config()
-    pinned_courts = [c for c in stream_config["stream_courts"] if c]
+    pinned_courts = pinned_courts_for_display()
 
     with state_lock:
         tour_id = CURRENT_TOURNAMENT_ID
@@ -2260,6 +2276,12 @@ def config_page():
                 message = msg
             else:
                 error = msg
+        elif form_name == 'pin_courts':
+            on = request.form.get('pin') == '1'
+            if manager:
+                manager.save_setting("pin_stream_courts", "1" if on else "0")
+            message = ("Stream courts are listed first on Commentary, Schedule and API Links."
+                       if on else "Courts are listed in normal order everywhere (no pinned courts).")
         elif form_name == 'result_hold':
             try:
                 minutes = max(0, min(120, int(request.form.get('minutes', '5'))))
@@ -2316,6 +2338,8 @@ def config_page():
         tournament_id=tour_id,
         match_tournid_filter=match_filter,
         result_hold_minutes=RESULT_HOLD_MINUTES,
+        pin_stream_courts=(manager.get_setting("pin_stream_courts") or "1") != "0" if manager else True,
+        pinned_now=pinned_courts_for_display(),
         feed_tournaments=feed_tournaments(),
         lta_schedule_info={
             "url": lta_schedule.get("url") or "",
@@ -3915,7 +3939,6 @@ def api_schedule_refresh():
 @app.route('/schedule')
 def schedule_page():
     """Order of play for every court, with staging of upcoming matches onto courts."""
-    stream_config = get_live_stream_config()
     tt_courts = sorted({str(m.get("court")) for m in (manager.get_latest_data(all_tournaments=True) if manager else [])
                         if m.get("court") and not m.get("staged")}
                        | set(lta_court_map["learned"].values()) | set(lta_court_map["manual"].values()),
@@ -3927,7 +3950,7 @@ def schedule_page():
         days=[f"{d[:4]}-{d[4:6]}-{d[6:]}" for d in lta_schedule.get("days") or []]
         or sorted({m["date"] for m in lta_schedule.get("matches") or []}),
         tt_courts=tt_courts,
-        pinned_courts=[c for c in stream_config["stream_courts"] if c],
+        pinned_courts=pinned_courts_for_display(),
     ))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return response

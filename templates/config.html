@@ -375,6 +375,17 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             <button class="btn" type="submit">Save Filter</button>
         </form>
 
+        <h2 class="subheading">Pinned Courts</h2>
+        <form method="post" action="/config">
+            <input type="hidden" name="form_name" value="pin_courts">
+            <p class="hint">The courts assigned to your live stream panels (below) can be listed first on Commentary, Schedule
+               and API Links. Only courts that actually have matches are shown.
+               {% if pin_stream_courts %}Pinned now: <strong>{{ pinned_now | join(', ') if pinned_now else 'none (no stream court matches a real court)' }}</strong>.{% endif %}</p>
+            <label class="check-row"><input type="checkbox" name="pin" value="1" {% if pin_stream_courts %}checked{% endif %}>
+                List the stream panels' courts first</label>
+            <button class="btn" type="submit">Save</button>
+        </form>
+
         <h2 class="subheading">Finished Matches on Air</h2>
         <form method="post" action="/config">
             <input type="hidden" name="form_name" value="result_hold">
