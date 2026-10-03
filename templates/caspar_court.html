@@ -211,11 +211,23 @@ function renderData(){
 }
 
 // ---------- Visibility control ----------
+// Each graphic only animates when its own visibility changes; a command for one
+// graphic (or a repeat "show") leaves graphics already on screen untouched.
+let bugShown = null;
+function setVisible(id, on){
+    const el = document.getElementById(id);
+    if (el.classList.contains('visible') !== on) el.classList.toggle('visible', on);
+}
 function applyState(){
-    const frame = document.getElementById('bug-frame');
-    try { frame.contentWindow.postMessage(gfxState.bug ? 'show' : 'hide', '*'); } catch(e){}
-    document.getElementById('lower-third').classList.toggle('visible', !!gfxState.lower_third);
-    document.getElementById('winner-gfx').classList.toggle('visible', !!gfxState.winner);
+    const wantBug = !!gfxState.bug;
+    if (wantBug !== bugShown){
+        try {
+            document.getElementById('bug-frame').contentWindow.postMessage(wantBug ? 'show' : 'hide', '*');
+            bugShown = wantBug;
+        } catch(e){}
+    }
+    setVisible('lower-third', !!gfxState.lower_third);
+    setVisible('winner-gfx', !!gfxState.winner);
     document.getElementById('dbg-state').textContent = JSON.stringify(gfxState);
 }
 
@@ -270,6 +282,9 @@ socket.on('graphic_command', data => {
     gfxState = data.state || gfxState;
     applyState();
 });
+
+// The bug frame may finish loading after the first command; re-send its state once it's ready
+document.getElementById('bug-frame').addEventListener('load', () => { bugShown = null; applyState(); });
 
 // Initial paint
 renderData();

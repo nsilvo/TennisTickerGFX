@@ -47,12 +47,13 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     clip-path: inset(0 100% 0 0);
 }
 
-/* Staggered content reveal while the shell wipes open */
-#bug-shell.visible .bug-grid > * {
+/* Staggered content reveal while the shell wipes open. Only during entry
+   (.entering), so score updates and repeat "show" commands don't replay it. */
+#bug-shell.entering .bug-grid > * {
     animation: bugItemIn 0.4s ease-out backwards;
 }
-#bug-shell.visible .bug-grid > :nth-child(-n+3) { animation-delay: 0.22s; }
-#bug-shell.visible .bug-grid > :nth-child(n+4)  { animation-delay: 0.34s; }
+#bug-shell.entering .bug-grid > :nth-child(-n+3) { animation-delay: 0.22s; }
+#bug-shell.entering .bug-grid > :nth-child(n+4)  { animation-delay: 0.34s; }
 
 @keyframes bugItemIn {
     from { opacity: 0; transform: translateX(-12px); }

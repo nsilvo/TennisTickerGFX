@@ -374,6 +374,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     const bugEl = document.getElementById('bug');
     const bugShellEl = document.getElementById('bug-shell');
     let hideTimeoutId = null;
+    let enterTimeoutId = null;
+    const ENTER_ANIMATION_MS = 800; // shell wipe + staggered content reveal
     const HIDE_TRANSITION_MS = 520; // keep in sync with #bug-shell clip-path transition duration
 
     // --- ISO 3 -> flag-icon code ---
@@ -503,7 +505,8 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
     // score content only once the exit animation has actually finished so
     // the bug doesn't snap away mid-transition.
     function hideBug() {
-        bugShellEl.classList.remove('visible');
+        clearTimeout(enterTimeoutId);
+        bugShellEl.classList.remove('visible', 'entering');
         bugShellEl.classList.add('hidden');
         clearTimeout(hideTimeoutId);
         hideTimeoutId = setTimeout(() => { bugEl.innerHTML = ""; }, HIDE_TRANSITION_MS);
@@ -549,12 +552,21 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
             return;
         }
 
+        // Entry animation only when the bug is actually appearing; a bug that's
+        // already on screen just updates its content in place
+        if (!bugShellEl.classList.contains('visible')) {
+            bugShellEl.classList.add('entering');
+            clearTimeout(enterTimeoutId);
+            enterTimeoutId = setTimeout(() => bugShellEl.classList.remove('entering'), ENTER_ANIMATION_MS);
+        }
         bugShellEl.classList.remove('hidden');
         bugShellEl.classList.add('visible');
     }
 
     // Playout control hooks for CasparCG and vMix
     function playIn() {
+        // Already on screen: nothing to do (don't rebuild or re-animate it)
+        if (!forceHidden && bugShellEl.classList.contains('visible')) return;
         forceHidden = false;
         if (matchData) renderBug(matchData);
     }
