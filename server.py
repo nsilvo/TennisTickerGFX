@@ -379,8 +379,10 @@ class XMLCacheManager:
     def feed_is_newer(self, matchid):
         """True when the feed changed this match's score after the last manual scoring action."""
         state = self.manual_scores.get(str(matchid))
-        if not state or state.get("feed_lock"):
-            return False
+        if not state or state.get("feed_lock") or str(matchid).startswith(STAGED_PREFIX):
+            return False   # (a staged match has no TennisTicker data of its own)
+        if manual_scoring.awaiting_confirmation(state):
+            return False   # finished result stays on air until the scorer marks it complete
         return self.feed_score_ts.get(str(matchid), 0) > state.get("updated_at", 0)
 
     def record_history(self, match):
@@ -2388,6 +2390,7 @@ def api_manual_score(match_id):
       status  {status: warmup|live|suspended}
       end     {side: 1|2, reason: retired|walkover|default}  finish early; side = winner
       lock    {locked: true|false}    keep this score on air even when the feed changes
+      complete                        mark a finished match complete (until then its result stays on air)
       resync                          carry on from the feed's current score
       stop                            hand the match back to the feed
     Whichever source changed the score most recently is shown (unless locked); scoring
@@ -2472,6 +2475,8 @@ def api_manual_score(match_id):
                 manual_scoring.end_match(state, side, str(body.get('reason') or ''))
             elif action == 'lock':
                 state["feed_lock"] = bool(body.get('locked'))
+            elif action == 'complete':
+                manual_scoring.confirm_result(state)
             elif action != 'resync':
                 return jsonify({"error": f"Unknown action '{action}'."}), 400
 
@@ -3284,6 +3289,11 @@ def effective_staged():
                 out[e["key"]] = {"court": "", "time": "", "auto": True}
     for key, stage in lta_staged.items():
         out[key] = dict(stage, auto=False)
+    # A staged match a scorer has worked on stays in the data until they hand it back
+    if manager:
+        for mid in manager.manual_scores:
+            if mid.startswith(STAGED_PREFIX) and mid[len(STAGED_PREFIX):] not in out:
+                out[mid[len(STAGED_PREFIX):]] = {"court": "", "time": "", "auto": True, "scored": True}
     return out
 
 
@@ -3344,7 +3354,7 @@ def staged_match_rows(feed_rows):
     # Recomputed only when the feed cache, schedule/staging, bios or the date change
     cache_key = (id(feed_rows), len(feed_rows), lta_version[0], datetime.now().strftime("%Y-%m-%d"),
                  id(manager._load_player_bios()) if manager else 0, len(manager.player_aliases) if manager else 0,
-                 len(staged_set))
+                 len(staged_set), len(manager.manual_scores) if manager else 0)
     if _staged_cache["key"] == cache_key:
         return _staged_cache["value"]
     entries = {e["key"]: e for e in lta_schedule.get("matches", [])}
@@ -3356,13 +3366,14 @@ def staged_match_rows(feed_rows):
     rows, covered = [], set()
     for key, stage in list(staged_set.items()):
         e = entries.get(key)
-        if not e or e["status"] == "COMPLETED":
+        scored = manager is not None and (STAGED_PREFIX + key) in manager.manual_scores
+        if not e or (e["status"] == "COMPLETED" and not scored):
             continue
         # The feed's copy of this match: linked by id, or the same players today
         twins = [feed_by_id[e["tt_matchid"]]] if e.get("tt_matchid") in feed_by_id else []
         if e["date"] == today:
             twins += [fm for fm in feed_rows if not fm.get("staged") and lta_orientation(fm, e)]
-        if any(classify_match_status(fm) != "UPCOMING" for fm in twins):
+        if any(classify_match_status(fm) != "UPCOMING" for fm in twins) and not scored:
             continue   # TennisTicker has it live (or finished): its live data takes over
         covered.update(str(fm.get("matchid")) for fm in twins)
 
@@ -4123,6 +4134,10 @@ def pick_court_match(ms):
     live = [x for x in ms if classify_match_status(x) == "LIVE"]
     if live:
         return live[0]
+    # A manually scored match that has finished stays on air (winner graphics) until marked complete
+    awaiting = [x for x in ms if x.get("awaiting_confirmation")]
+    if awaiting:
+        return awaiting[0]
     staged = [x for x in ms if x.get("staged") and classify_match_status(x) == "UPCOMING"]
     if staged:
         return sorted(staged, key=lambda x: (str(x.get("schedule_date") or ""),

@@ -451,25 +451,30 @@ function renderPicker(){
         if (q && !text.includes(q)) return;
         (byCourt[m.court || 'No court'] = byCourt[m.court || 'No court'] || []).push(m);
     });
-    const order = { LIVE: 0, UPCOMING: 1, SUSPENDED: 2, COMPLETED: 3 };
-    // Courts with something to score (live / being scored / upcoming) first
-    const rank = c => Math.min(...byCourt[c].map(m => m.manual ? -1 : (order[bucket(m)] ?? 2)));
-    const courts = Object.keys(byCourt).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
-    $('courts').innerHTML = courts.map(c => {
-        const ms = byCourt[c].sort((a, b) => (order[bucket(a)] ?? 2) - (order[bucket(b)] ?? 2) || String(a.schedtime || '').localeCompare(String(b.schedtime || '')));
-        return `<div class="court"><h2>🎾 ${esc(c)}</h2>${ms.slice(0, 6).map(m => {
-            const b = bucket(m);
-            return `<a class="pick" href="/score?match=${encodeURIComponent(m.matchid)}">
-                <div class="names">${esc(m.player1)} <span class="muted">v</span> ${esc(m.player2)}</div>
-                <div class="meta"><span class="pill ${b === 'LIVE' ? 'live' : ''}">${esc(b)}</span>
-                    ${m.manual ? '<span class="pill warmup">✍️ Scored here</span>' : ''}
-                    ${m.staged ? '<span class="pill">Staged</span>' : ''}
-                    <span>${esc(m.matchname || '')}</span>
-                    ${m.schedtime ? `<span>${esc(m.schedtime)}</span>` : ''}
-                    ${scoreLine(m) ? `<strong>${esc(scoreLine(m))}</strong>` : ''}</div>
-            </a>`;
-        }).join('')}</div>`;
-    }).join('') || '<div class="muted">No matches found.</div>';
+    const when = m => `${m.schedule_date || ''} ${m.schedtime || '99:99'}`;
+    // Per court: what's live (or finished and waiting to be marked complete), plus the next
+    // upcoming match. Completed matches aren't shown. Searching lists every upcoming match.
+    const courts = [];
+    Object.keys(byCourt).forEach(c => {
+        const ms = byCourt[c];
+        const live = ms.filter(m => bucket(m) === 'LIVE' || m.awaiting_confirmation);
+        const upcoming = ms.filter(m => bucket(m) === 'UPCOMING').sort((a, b) => when(a).localeCompare(when(b)));
+        const shown = [...live, ...(q ? upcoming : upcoming.slice(0, 1))];
+        if (shown.length) courts.push({ court: c, ms: shown, rank: live.length ? 0 : 1 });
+    });
+    courts.sort((a, b) => a.rank - b.rank || a.court.localeCompare(b.court, undefined, { numeric: true }));
+    $('courts').innerHTML = courts.map(({ court, ms }) => `<div class="court"><h2>🎾 ${esc(court)}</h2>${ms.map(m => {
+        const b = m.awaiting_confirmation ? 'FINISHED' : bucket(m);
+        const next = b === 'UPCOMING';
+        return `<a class="pick" href="/score?match=${encodeURIComponent(m.matchid)}">
+            <div class="names">${esc(m.player1)} <span class="muted">v</span> ${esc(m.player2)}</div>
+            <div class="meta"><span class="pill ${b === 'LIVE' ? 'live' : b === 'FINISHED' ? 'warmup' : ''}">${next ? 'NEXT' : esc(b)}</span>
+                ${m.awaiting_confirmation ? '<span class="pill warmup">Mark complete</span>' : m.manual ? '<span class="pill warmup">✍️ Scored here</span>' : ''}
+                <span>${esc(m.matchname || '')}</span>
+                ${m.schedtime ? `<span>${esc(m.schedtime)}</span>` : ''}
+                ${scoreLine(m) ? `<strong>${esc(scoreLine(m))}</strong>` : ''}</div>
+        </a>`;
+    }).join('')}</div>`).join('') || `<div class="muted">${q ? 'No live or upcoming matches match your search.' : 'No live or upcoming matches right now.'}</div>`;
 }
 $('search').addEventListener('input', renderPicker);
 
@@ -575,7 +580,7 @@ function renderScoring(){
     const done = !!st.winner;
     const pill = $('status-pill');
     pill.classList.remove('hidden', 'live', 'warmup', 'suspended');
-    const label = done ? (st.end_reason ? `Finished · ${st.end_reason}` : 'Finished') : st.status === 'warmup' ? 'Warm-up' : st.status === 'suspended' ? 'Suspended' : 'Live';
+    const label = done ? (st.awaiting_confirmation ? 'Finished · confirm' : st.end_reason ? `Complete · ${st.end_reason}` : 'Complete') : st.status === 'warmup' ? 'Warm-up' : st.status === 'suspended' ? 'Suspended' : 'Live';
     pill.textContent = label;
     pill.classList.add(done ? 'x' : st.status);
 
@@ -651,7 +656,11 @@ function feedNotice(st, done){
     if (data.feed_newer) notice(`📡 TennisTicker has updated the score since your last action, so the feed's score is on air.
         Your next point carries on from it. <button class="btn small" type="button" data-act="resync">Sync now</button>
         <button class="btn small" type="button" data-act="lock-on">Ignore feed for this match</button>`, 'info');
-    else if (done) notice(`Match finished. The result is on air. <button class="btn small" type="button" data-act="stop-armed">Hand back to feed</button>`, 'done');
+    else if (st.awaiting_confirmation) notice(`🏆 Match finished. The result and winner are on air for graphics.
+        Check the score, then <button class="btn gold" type="button" data-act="complete">✔ Mark complete</button>
+        <span class="muted" style="font-size:0.85rem">Mistake? Use Undo.</span>`, 'done');
+    else if (done) notice(`✔ Marked complete. <a class="btn small gold" href="/score">Next match →</a>
+        <button class="btn small" type="button" data-act="stop-armed">Hand back to feed</button>`, 'done');
     else notice('');
 }
 
@@ -815,6 +824,7 @@ document.addEventListener('click', e => {
     else if (a === 'lock-on') act('lock', { locked: true });
     else if (a === 'lock-off') act('lock', { locked: false });
     else if (a === 'resync') act('resync');
+    else if (a === 'complete') act('complete');
     else if (a === 'arm') arm(b.dataset.arm);
     else if (a === 'stop-armed'){ openSheet(); arm('stop'); }
 });

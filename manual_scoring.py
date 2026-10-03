@@ -85,6 +85,7 @@ def ensure(state):
         state["deuces"] = 1 if state.get("points") == [3, 3] else 0
     state.setdefault("status", "live")
     state.setdefault("end_reason", "")
+    state.setdefault("confirmed", False)   # result marked complete by the scorer
     state.setdefault("started_at", 0)
     state.setdefault("ended_at", 0)
     state.setdefault("log", [])            # one entry per point (stats); not part of undo snapshots
@@ -395,6 +396,20 @@ def end_match(state, winner, reason):
     return state
 
 
+def awaiting_confirmation(state):
+    """Finished but not yet marked complete: the result stays on air for graphics."""
+    return bool(ensure(state)["winner"]) and not state["confirmed"]
+
+
+def confirm_result(state):
+    """Scorer marks the finished match complete; the court can move on to its next match."""
+    ensure(state)
+    if state["winner"] and not state["confirmed"]:
+        _snapshot(state)
+        state["confirmed"] = True
+    return state
+
+
 def set_rules(state, rules):
     ensure(state)
     _snapshot(state)
@@ -533,6 +548,8 @@ def summary(state):
         "winner": state["winner"],
         "status": state["status"],
         "end_reason": state["end_reason"],
+        "confirmed": state["confirmed"],
+        "awaiting_confirmation": awaiting_confirmation(state),
         "in_tiebreak": in_tiebreak(state),
         "in_match_tiebreak": in_match_tiebreak(state),
         "deciding_point": deciding_point(state),
@@ -633,5 +650,7 @@ def apply_to_match(match, state, max_sets=11):
     m["point_flag"] = (deciding_point(state) + " point").upper() if deciding_point(state) else \
         (flags[1] or flags[2]).upper()
     m["result_note"] = {"retired": "Ret.", "walkover": "W/O", "default": "Def."}.get(state["end_reason"], "")
+    # Finished but not yet marked complete: keeps the court's on-air slot (winner graphics)
+    m["awaiting_confirmation"] = awaiting_confirmation(state)
     m["manual_stats"] = stats(state)
     return m
