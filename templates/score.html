@@ -14,7 +14,12 @@ Copyright (c) 2025 Nathan Silveston. All rights reserved.
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Scoring">
 <meta name="theme-color" content="#0b0b11">
+<link rel="manifest" href="/score.webmanifest">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/score-180.png') }}">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icons/score-192.png') }}">
 <title>🎾 Scoring</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
 <style>
@@ -183,6 +188,11 @@ select, input[type=number] {
 .sheet h3:first-child { margin-top: 0; }
 .sheet .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .sheet-inner { max-width: 900px; margin: 0 auto; }
+.install-steps { margin: 8px 0 0; padding-left: 22px; font-size: 1rem; line-height: 1.6; }
+.install-steps li { margin-bottom: 8px; }
+.kbd-icon { display: inline-block; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9em; }
+/* Installed (home screen) app: no browser chrome, so no need for these */
+.standalone #install-btn, .standalone #fs-btn { display: none; }
 .games-adjust { display: flex; align-items: center; gap: 8px; }
 .games-adjust strong { min-width: 28px; text-align: center; font-size: 1.2rem; }
 
@@ -216,6 +226,8 @@ select, input[type=number] {
         <span class="spacer"></span>
         <span class="pill hidden" id="status-pill"></span>
         <span class="timer" id="timer"></span>
+        <button type="button" class="btn small" id="fs-btn" data-act="fullscreen">⛶ Full screen</button>
+        <button type="button" class="btn small" id="install-btn" data-act="install">📲 Install app</button>
         <a href="/" class="btn small" id="home-btn">Dashboard</a>
     </div>
     <div id="notice"></div>
@@ -332,6 +344,69 @@ function toast(msg){
 }
 function notice(html, cls){ $('notice').innerHTML = html ? `<div class="notice ${cls || 'error'}">${html}</div>` : ''; }
 function buzz(){ if (navigator.vibrate) navigator.vibrate(12); }
+
+// ====================================================================
+// Full screen and "install as an app"
+// ====================================================================
+const isStandalone = () => window.navigator.standalone === true
+    || window.matchMedia('(display-mode: standalone)').matches
+    || window.matchMedia('(display-mode: fullscreen)').matches;
+if (isStandalone()) document.documentElement.classList.add('standalone');
+// iPadOS reports itself as a Mac; touch support gives it away
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const canFullscreen = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+
+function toggleFullscreen(){
+    const el = document.documentElement;
+    if (fsElement()){
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+        return;
+    }
+    if (!canFullscreen()){ showInstall(true); return; }   // iPhone Safari: only an installed app is full screen
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    try {
+        const p = req.call(el, { navigationUI: 'hide' });
+        if (p && p.catch) p.catch(() => showInstall(true));
+    } catch(e){ showInstall(true); }
+}
+function updateFsButton(){ $('fs-btn').textContent = fsElement() ? '🗗 Exit full screen' : '⛶ Full screen'; }
+document.addEventListener('fullscreenchange', updateFsButton);
+document.addEventListener('webkitfullscreenchange', updateFsButton);
+
+// Android / desktop Chrome offer a real install prompt; iOS needs Share → Add to Home Screen
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+
+function showInstall(fromFullscreen){
+    if (installPrompt && !fromFullscreen){
+        const prompt = installPrompt;
+        // If the browser refuses its own install prompt, fall back to the manual steps
+        Promise.resolve().then(() => prompt.prompt()).then(() => prompt.userChoice)
+            .then(() => { installPrompt = null; })
+            .catch(() => { installPrompt = null; showInstall(false); });
+        return;
+    }
+    const steps = isIOS
+        ? `<ol class="install-steps">
+            <li>Open this page in <strong>Safari</strong>.</li>
+            <li>Tap the <span class="kbd-icon">Share ⬆︎</span> button (top right on iPad, bottom on iPhone).</li>
+            <li>Choose <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li>
+            <li>Open <strong>Scoring</strong> from your home screen: it runs full screen with no address bar, and keeps the screen awake while scoring.</li>
+           </ol>`
+        : `<ol class="install-steps">
+            <li>Open your browser menu (<span class="kbd-icon">⋮</span>).</li>
+            <li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+            <li>Open <strong>Scoring</strong> from your home screen or app list - it runs full screen.</li>
+           </ol>`;
+    $('sheet-inner').innerHTML = `<h3>${fromFullscreen ? 'Full screen needs the app' : 'Install the scoring app'}</h3>
+        ${fromFullscreen ? '<p class="muted">This browser can\'t hide the address bar for a web page, but the home-screen app runs full screen.</p>' : ''}
+        ${steps}
+        <p class="muted" style="font-size:0.85rem">The app opens on the match list; the server address stays the same as this page.</p>
+        <div style="margin-top:16px"><button class="btn gold" style="width:100%" data-act="close">Done</button></div>`;
+    sheetMode = 'install';
+    $('sheet').classList.remove('hidden'); $('sheet-back').classList.remove('hidden');
+}
 
 // Keep the screen awake while scoring (supported on iPadOS 16.4+, Android Chrome)
 let wakeLock = null;
@@ -545,7 +620,7 @@ function renderScoring(){
         });
         document.querySelector('[data-act="undo"]').disabled = !st.can_undo;
         if (!$('stats-card').classList.contains('hidden')) renderStats();
-        if (!$('sheet').classList.contains('hidden')) renderSheet();
+        if (sheetMode === 'more') renderSheet();
         feedNotice(st, done);
         tick();
         return;
@@ -568,7 +643,7 @@ function renderScoring(){
     feedNotice(st, done);
 
     if (!$('stats-card').classList.contains('hidden')) renderStats();
-    if (!$('sheet').classList.contains('hidden')) renderSheet();
+    if (sheetMode === 'more') renderSheet();
     tick();
 }
 
@@ -676,8 +751,9 @@ function renderSheet(){
         </div>
         <div style="margin-top:16px"><button class="btn gold" style="width:100%" data-act="close">Done</button></div>`;
 }
-function openSheet(){ $('sheet').classList.remove('hidden'); $('sheet-back').classList.remove('hidden'); renderSheet(); }
-function closeSheet(){ $('sheet').classList.add('hidden'); $('sheet-back').classList.add('hidden'); armed = ''; }
+let sheetMode = '';   // 'more' (live-refreshed menu) or 'install' (static instructions)
+function openSheet(){ sheetMode = 'more'; $('sheet').classList.remove('hidden'); $('sheet-back').classList.remove('hidden'); renderSheet(); }
+function closeSheet(){ sheetMode = ''; $('sheet').classList.add('hidden'); $('sheet-back').classList.add('hidden'); armed = ''; }
 $('sheet-back').addEventListener('click', closeSheet);
 
 // ====================================================================
@@ -709,7 +785,7 @@ function arm(key){
         if (key.startsWith('end-')){ const [, reason, w] = key.split('-'); act('end', { side: +w, reason }); closeSheet(); return; }
     }
     armed = key;
-    armTimer = setTimeout(() => { armed = ''; if (!$('sheet').classList.contains('hidden')) renderSheet(); }, 4000);
+    armTimer = setTimeout(() => { armed = ''; if (sheetMode === 'more') renderSheet(); }, 4000);
     renderSheet();
 }
 
@@ -726,6 +802,8 @@ document.addEventListener('click', e => {
     if (a === 'fault') act('fault');
     else if (a === 'ace') act('ace');
     else if (a === 'let') toast('Let · replay the serve');
+    else if (a === 'fullscreen') toggleFullscreen();
+    else if (a === 'install') showInstall(false);
     else if (a === 'undo') act('undo');
     else if (a === 'swap-server') act('server', { side: 3 - data.state.server });
     else if (a === 'stats'){ $('stats-card').classList.toggle('hidden'); renderStats(); }

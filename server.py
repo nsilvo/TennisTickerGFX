@@ -2480,6 +2480,32 @@ def api_manual_presets():
                     for k, v in manual_scoring.PRESETS.items()})
 
 
+@app.route('/score.webmanifest')
+def score_manifest():
+    """Web app manifest: 'Add to Home Screen' installs the scoring page as a full-screen app."""
+    manifest = {
+        "name": "Courtside Scoring",
+        "short_name": "Scoring",
+        "description": "Courtside tennis and padel scoring",
+        "start_url": "/score",
+        "scope": "/",
+        "display": "fullscreen",
+        "display_override": ["fullscreen", "standalone"],
+        "orientation": "any",
+        "background_color": "#0b0b11",
+        "theme_color": "#0b0b11",
+        "icons": [
+            {"src": url_for('static', filename='icons/score-192.png'), "sizes": "192x192", "type": "image/png"},
+            {"src": url_for('static', filename='icons/score-512.png'), "sizes": "512x512", "type": "image/png"},
+            {"src": url_for('static', filename='icons/score-512.png'), "sizes": "512x512", "type": "image/png",
+             "purpose": "maskable"},
+        ],
+    }
+    response = make_response(json.dumps(manifest))
+    response.headers['Content-Type'] = 'application/manifest+json'
+    return response
+
+
 @app.route('/score')
 def score_page():
     """Courtside scoring (phone / iPad): pick a match, set it live, score every point."""
