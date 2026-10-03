@@ -1485,6 +1485,8 @@ def player_event_stats(player_key):
          "bagels_given": 0, "bagels_received": 0, "time_on_court_sec": 0, "longest_match_sec": 0, "timed_matches": 0}
     serve = {"aces": 0, "double_faults": 0, "serve_points": 0, "first_serve_in": 0,
              "break_points_won": 0, "break_points": 0, "matches": 0}
+    wins_detail = []   # {"score": "6-1 6-0", "conceded": 1, "opponent": ..., "sets": 2}
+    partners = {}      # partner name -> [wins, losses]
 
     for m in all_known_matches():
         side1 = side_player_entries(m.get('player1_full') or m.get('player1'))
@@ -1509,6 +1511,14 @@ def player_event_stats(player_key):
         won = winner_code == str(mine_idx)
         s["matches"] += 1
         s["wins" if won else "losses"] += 1
+        own_side, opp_side = (side1, side2) if mine_idx == 1 else (side2, side1)
+        bios_now = manager.get_all_player_bios() if manager else {}
+        name_of = lambda p: (bios_now.get(p['key']) or {}).get('display_name') or _feed_full_name(p['name'])
+        opponent = " / ".join(name_of(p) for p in opp_side) or "TBC"
+        for partner in (p for p in own_side if p['key'] not in keys):
+            rec = partners.setdefault(name_of(partner), [0, 0])
+            rec[0 if won else 1] += 1
+        line, conceded = [], 0
 
         set_results = []
         for i in range(1, min(int(m.get('sets_played_count') or 0), MAX_SETS) + 1):
@@ -1519,6 +1529,9 @@ def player_event_stats(player_key):
             if a == 0 and b == 0:
                 continue
             mine, theirs = (a, b) if mine_idx == 1 else (b, a)
+            line.append(f"{mine}-{theirs}")
+            if max(mine, theirs) < 10:
+                conceded += theirs
             set_won = mine > theirs
             set_results.append(set_won)
             s["sets_won" if set_won else "sets_lost"] += 1
@@ -1534,6 +1547,9 @@ def player_event_stats(player_key):
             elif (mine, theirs) == (0, 6):
                 s["bagels_received"] += 1
 
+        if won and line:
+            wins_detail.append({"score": " ".join(line), "conceded": conceded, "opponent": opponent,
+                                "sets": len(line)})
         if set_results:
             lost_sets = set_results.count(False)
             if won and lost_sets == 0:
@@ -1555,16 +1571,54 @@ def player_event_stats(player_key):
     games = s["games_won"] + s["games_lost"]
     s["games_pct"] = round(100 * s["games_won"] / games) if games else None
     s["avg_match_sec"] = s["time_on_court_sec"] // s["timed_matches"] if s["timed_matches"] else 0
+    s["wins_detail"] = wins_detail
+    s["partners"] = {name: {"wins": w, "losses": l} for name, (w, l) in partners.items()}
     if serve["matches"]:
         serve["first_serve_pct"] = round(100 * serve["first_serve_in"] / serve["serve_points"]) if serve["serve_points"] else None
         s["serve"] = serve
     return s
 
 
+def _times(n):
+    return {1: "once", 2: "twice", 3: "three times", 4: "four times"}.get(n, f"{n} times")
+
+
+def standout_talking_points(s):
+    """Eye-catching results this event: repeated scorelines, dominant wins, double bagels, partnerships."""
+    points = []
+    wins = s.get("wins_detail") or []
+    straight = [w for w in wins if w["sets"] >= 2]
+    counts = {}
+    for w in straight:
+        counts[w["score"]] = counts.get(w["score"], 0) + 1
+    repeated = sorted((c, sc) for sc, c in counts.items() if c >= 2)
+    for c, sc in reversed(repeated):
+        points.append(f"Won {sc} {_times(c)} this event.")
+    for w in straight:
+        if w["score"] == "6-0 6-0":
+            points.append(f"Double-bagel win this event: 6-0 6-0 v {w['opponent']}.")
+            break
+    dominant = [w for w in straight if w["conceded"] <= 2]
+    if len(dominant) >= 2 and not (repeated and len(repeated) == 1 and repeated[0][0] == len(dominant)):
+        example = min(dominant, key=lambda w: w["conceded"])["score"]
+        points.append(f"Has won {len(dominant)} matches dropping two games or fewer this event (e.g. {example}).")
+    if straight and len(wins) >= 2:
+        best = min(straight, key=lambda w: (w["conceded"], -w["sets"]))
+        if best["conceded"] <= 4 and best["score"] != "6-0 6-0":
+            points.append(f"Biggest win this event: {best['score']} v {best['opponent']}.")
+    for partner, rec in (s.get("partners") or {}).items():
+        if rec["wins"] + rec["losses"] >= 2:
+            if rec["losses"] == 0:
+                points.append(f"Unbeaten with {partner} this event ({rec['wins']}-0).")
+            else:
+                points.append(f"{rec['wins']}-{rec['losses']} with {partner} this event.")
+    return points
+
+
 def event_talking_points(s, name=""):
     """Commentator sentences from this-event stats (most newsworthy first)."""
     first = (name or "").split(" ")[0] or "They"
-    points = []
+    points = standout_talking_points(s)
     if s["matches"] >= 1 and s["losses"] == 0 and s["sets_lost"] == 0 and s["wins"]:
         points.append(f"Yet to drop a set this event ({s['wins']} win{'s' if s['wins'] != 1 else ''}).")
     if s["wins"] and s["games_lost"] <= 4 * s["matches"] and s["games_won"] + s["games_lost"] >= 12:
