@@ -4070,14 +4070,23 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW, bios=None):
         if present and (p1 > 0 or p2 > 0):
             last_nonzero = i
     current_set = (last_nonzero or (1 if sets_raw[0][0] else 0)) if is_live else 0
+    if is_live and last_nonzero and last_nonzero < sets_to_include:
+        p1_last, p2_last = sets_raw[last_nonzero - 1][1:3]
+        # The last set with games is finished, so the next set is in play at 0-0 (not "-")
+        if is_set_won(p1_last, p2_last) or is_set_won(p2_last, p1_last):
+            current_set = last_nonzero + 1
+    if is_live and match.get("manual") and match.get("sets_played_count"):
+        # Manual scoring always includes the set in play (works for short sets / Fast4 too)
+        current_set = min(int(match["sets_played_count"]), sets_to_include)
 
     p1_sets_won = 0
     p2_sets_won = 0
     summary_parts = []
 
     for i, (present, p1, p2, tb) in enumerate(sets_raw, start=1):
-        # Show a set only if it has games, or it is the current live set (may be 0-0)
-        show = present and ((p1 > 0 or p2 > 0) or i == current_set)
+        # Show a set only if it has games, or it is the current live set (may be 0-0,
+        # including a new set the feed hasn't sent yet)
+        show = (present and (p1 > 0 or p2 > 0)) or (is_live and i == current_set)
 
         row[f"p1_set{i}"] = str(p1) if show else "-"
         row[f"p2_set{i}"] = str(p2) if show else "-"
