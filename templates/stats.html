@@ -482,7 +482,7 @@ function statusBucket(m){
 }
 
 function isPadel(m){
-    return `${m.tname || ''} ${m.matchname || ''}`.toLowerCase().includes('padel');
+    return m.sport === 'padel' || `${m.tname || ''} ${m.matchname || ''}`.toLowerCase().includes('padel');
 }
 
 function matchesForCourt(court){

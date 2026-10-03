@@ -432,6 +432,9 @@ class XMLCacheManager:
                 continue
             payload = {"timestamp": now_str, "match": m}
             socketio.emit('match_update', payload, to=f"match_{mid}")
+            # Overlays opened for the staged version of this match keep following it
+            for staged_id in staged_ids_for(mid):
+                socketio.emit('match_update', payload, to=f"match_{staged_id}")
             court = str(m.get('court') or '').strip()
             if court:
                 socketio.emit('match_update', payload, to=f"court_{court}")
@@ -2381,6 +2384,9 @@ def api_manual_score(match_id):
     if manager is None:
         return jsonify({"error": "Cache manager not initialized."}), 503
     match_id = str(match_id)
+    # A staged match that TennisTicker now carries is scored under the TennisTicker id
+    if match_id.startswith(STAGED_PREFIX) and manager.get_feed_match(match_id) is None:
+        match_id = staged_match_alias(match_id) or match_id
     if request.method == 'GET':
         return jsonify(manual_score_response(match_id))
 
@@ -3186,6 +3192,13 @@ def link_lta_schedule():
             entry["tt_matchid"] = mid
             linked.add(mid)
             changed = True
+            # A scorer working on the staged match carries on with the TennisTicker match
+            staged_id = STAGED_PREFIX + entry["key"]
+            state = manager.manual_scores.get(staged_id)
+            if state is not None and mid not in manager.manual_scores:
+                manager.save_manual_score(mid, state, active=True)
+                manager.save_manual_score(staged_id, state, active=False)
+                print(f"Manual scoring moved from {staged_id} to TennisTicker match {mid}")
             if entry["lta_court"] and tt_court:
                 lta_court_map["learned"][entry["lta_court"]] = tt_court
             print(f"LTA schedule: linked TennisTicker match {mid} to {entry['event']} on {entry['lta_court'] or 'unknown court'}")
@@ -4330,8 +4343,7 @@ def handle_subscribe(data):
         try:
             snapshot = None
             if matchid:
-                snapshot = next((x for x in manager.get_latest_data()
-                                 if str(x.get('matchid')) == matchid), None)
+                snapshot = resolve_match(matchid=matchid)
             if snapshot is None and court:
                 snapshot = resolve_match(court=court, auto_single_live=True, fallback_any=True)
 

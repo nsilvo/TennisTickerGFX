@@ -286,7 +286,16 @@ select, input[type=number] {
 
 <script id="score-config" type="application/json">{{ {"match_id": match_id} | tojson }}</script>
 <script>
-const MATCH_ID = JSON.parse(document.getElementById('score-config').textContent).match_id;
+let MATCH_ID = JSON.parse(document.getElementById('score-config').textContent).match_id;
+
+// A staged match gets TennisTicker's id once the feed carries it: follow it
+function followMatchId(j){
+    if (j && j.matchid && String(j.matchid) !== MATCH_ID){
+        MATCH_ID = String(j.matchid);
+        history.replaceState(null, '', `/score?match=${encodeURIComponent(MATCH_ID)}`);
+        toast('Now linked to the TennisTicker match');
+    }
+}
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let data = null;           // last /api/v1/manual response
@@ -375,6 +384,7 @@ async function loadMatch(){
         const resp = await fetch(`/api/v1/manual/${encodeURIComponent(MATCH_ID)}`);
         const j = await resp.json();
         if (!resp.ok){ notice(esc(j.error || 'Match not found.') + ' <a href="/score">Pick another match</a>'); return; }
+        followMatchId(j);
         data = j;
         render();
     } catch(e){ notice('Could not reach the server - check the connection.'); }
@@ -417,7 +427,7 @@ function renderSetup(){
     $('scoring').classList.add('hidden');
     $('setup').classList.remove('hidden');
     const m = data.match || {};
-    const padel = `${m.tname || ''} ${m.matchname || ''} ${m.court || ''}`.toLowerCase().includes('padel');
+    const padel = m.sport === 'padel' || `${m.tname || ''} ${m.matchname || ''} ${m.court || ''}`.toLowerCase().includes('padel');
     const preset = $('preset');
     if (!preset.dataset.touched) preset.value = padel ? 'padel_golden_mtb' : 'tennis_bo3';
     const [n1, n2] = names();
@@ -631,6 +641,7 @@ function act(action, extra){
             });
             const j = await resp.json();
             if (!resp.ok){ notice(esc(j.error || 'That did not work.')); return; }
+            followMatchId(j);
             data = j; loadedAt = Date.now();
             render();
         } catch(e){ notice('Could not reach the server - the last action may not have been saved. Check the connection.'); }
@@ -692,7 +703,7 @@ let lastSync = 0;
 socket.on('live_updates', d => {
     if (!MATCH_ID){ if (Date.now() - lastSync > 5000){ lastSync = Date.now(); pickerMatches = d.live_matches || []; renderPicker(); } return; }
     const m = (d.live_matches || []).find(x => String(x.matchid) === MATCH_ID);
-    if (!m) return;
+    if (!m){ if (MATCH_ID.startsWith('lta-')) loadMatch(); return; }
     const key = JSON.stringify([m.game1, m.game2, m.sets_played_count, m.matchstatus, m.player2serve, m.serve_number, m.point_flag]);
     if (key !== live_updates_key){ live_updates_key = key; loadMatch(); }
 });
