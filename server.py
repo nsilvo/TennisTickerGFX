@@ -355,7 +355,7 @@ class XMLCacheManager:
             cache = self._latest_cache
         found = next((m for m in cache if str(m.get('matchid')) == str(matchid)), None)
         if found is None and str(matchid).startswith(STAGED_PREFIX):
-            found = next((m for m in staged_match_rows(cache) if m['matchid'] == str(matchid)), None)
+            found = next((m for m in staged_match_rows(cache)[0] if m['matchid'] == str(matchid)), None)
         return found
 
     def feed_is_newer(self, matchid):
@@ -494,18 +494,23 @@ class XMLCacheManager:
                 return None
 
     def get_all_player_bios(self):
-        """Return every saved player bio keyed by player_key."""
+        """Return every saved player bio keyed by player_key (cached until a bio is saved)."""
+        cached = getattr(self, "_bios_cache", None)
+        if cached is not None:
+            return cached
         with self.db_lock:
             cursor = self.conn.cursor()
             try:
                 cursor.execute("SELECT * FROM player_bios")
                 cols = [d[0] for d in cursor.description]
-                return {row[cols.index('player_key')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+                self._bios_cache = {row[cols.index('player_key')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+                return self._bios_cache
             except Exception as e:
                 print(f"Error reading player bios: {e}")
                 return {}
 
     def save_player_bio(self, player_key, fields):
+        self._bios_cache = None
         """Insert or update a player bio. `fields` maps bio column -> value."""
         values = {col: str(fields.get(col) or '').strip() for col in self.PLAYER_BIO_FIELDS}
         with self.db_lock:
@@ -1028,9 +1033,10 @@ class XMLCacheManager:
             matches_list = self._latest_cache
 
         # Matches staged from the LTA order of play sit alongside the feed until TennisTicker has them
-        staged = staged_match_rows(matches_list)
+        staged, covered = staged_match_rows(matches_list)
         if staged:
-            matches_list = matches_list + staged
+            # TennisTicker's planned copy of a staged match is hidden until it goes live
+            matches_list = [m for m in matches_list if str(m.get('matchid')) not in covered] + staged
 
         if self.manual_scores:
             # A commentator's manual score replaces the feed's score for that match everywhere,
@@ -3010,42 +3016,82 @@ def _lta_feed_side(side):
     return " / ".join(p["name"] for p in side) or "TBC"
 
 
+COUNTRY_CODES = {
+    "great britain": "GBR", "united kingdom": "GBR", "england": "GBR", "scotland": "GBR", "wales": "GBR",
+    "ireland": "IRL", "spain": "ESP", "france": "FRA", "germany": "GER", "italy": "ITA", "netherlands": "NED",
+    "portugal": "POR", "sweden": "SWE", "belgium": "BEL", "switzerland": "SUI", "united states": "USA",
+    "australia": "AUS", "argentina": "ARG", "brazil": "BRA", "denmark": "DEN", "norway": "NOR", "finland": "FIN",
+}
+
+
+def _staged_side(side, bios):
+    """(full names, feed-style country code) for an LTA side, using saved bios where we have them."""
+    names, countries = [], set()
+    for p in side:
+        first, _, surname = p["name"].partition(" ")
+        bio = {}
+        for key in lta_candidate_keys({"first": first, "surname": surname or first}):
+            if key in bios:
+                bio = bios[key]
+                break
+        names.append(bio.get("display_name") or p["name"])
+        country = str(bio.get("country") or "").strip()
+        countries.add(COUNTRY_CODES.get(country.lower(), country.upper() if len(country) == 3 else ""))
+    code = countries.pop() if len(countries) == 1 else ""
+    return " / ".join(names) or "TBC", code
+
+
 def staged_match_rows(feed_rows):
     """
-    Synthetic upcoming match rows for staged LTA matches. A staged match steps
-    aside once TennisTicker carries it (linked, or same players in the feed today)
-    or LTA records a result.
+    Synthetic upcoming match rows for staged LTA matches, built from our own data
+    (LTA order of play + player bios). A staged match stays on air - even if
+    TennisTicker also lists it as planned - until TennisTicker marks it live
+    (or finishes it), or LTA records a result. Returns (rows, covered_feed_ids):
+    covered ids are TennisTicker's planned duplicates of staged matches.
     """
     if not lta_staged:
-        return []
+        return [], set()
     entries = {e["key"]: e for e in lta_schedule.get("matches", [])}
-    feed_ids = {str(m.get("matchid")) for m in feed_rows}
+    feed_by_id = {str(m.get("matchid")): m for m in feed_rows}
     today = datetime.now().strftime("%Y-%m-%d")
-    rows = []
+    bios = manager.get_all_player_bios() if manager else {}
+    tname_default = lta_schedule.get("tournament_name") or next(
+        (str(m.get("tname")).strip() for m in feed_rows if str(m.get("tname") or "").strip()), "")
+    rows, covered = [], set()
     for key, stage in list(lta_staged.items()):
         e = entries.get(key)
-        if not e or e["status"] == "COMPLETED" or (e.get("tt_matchid") and e["tt_matchid"] in feed_ids):
+        if not e or e["status"] == "COMPLETED":
             continue
-        if e["date"] == today and any(lta_orientation(fm, e) for fm in feed_rows):
-            continue
-        p1, p2 = _lta_feed_side(e["sides"][0]), _lta_feed_side(e["sides"][1])
+        # The feed's copy of this match: linked by id, or the same players today
+        twins = [feed_by_id[e["tt_matchid"]]] if e.get("tt_matchid") in feed_by_id else []
+        if e["date"] == today:
+            twins += [fm for fm in feed_rows if not fm.get("staged") and lta_orientation(fm, e)]
+        if any(classify_match_status(fm) != "UPCOMING" for fm in twins):
+            continue   # TennisTicker has it live (or finished): its live data takes over
+        covered.update(str(fm.get("matchid")) for fm in twins)
+
+        (p1, c1), (p2, c2) = _staged_side(e["sides"][0], bios), _staged_side(e["sides"][1], bios)
+        court = stage.get("court") or lta_display_court(e["lta_court"]) or e["venue"]
+        same_court_tname = next((str(fm.get("tname")).strip() for fm in feed_rows
+                                 if str(fm.get("court") or "") == court and str(fm.get("tname") or "").strip()), "")
         rows.append({
             "matchid": STAGED_PREFIX + key,
             "staged": True,
             "lta_key": key,
-            "court": stage.get("court") or lta_display_court(e["lta_court"]) or e["venue"],
+            "court": court,
             "schedtime": stage.get("time") or e["time"],
             "schedule_date": e["date"],
             "matchname": " ".join(x for x in (e["event"], e["round"]) if x),
-            "tname": lta_schedule.get("tournament_name") or "",
+            "tname": lta_schedule.get("tournament_name") or same_court_tname or tname_default,
             "tournid": "",
             "player1": p1, "player2": p2, "player1_full": p1, "player2_full": p2,
-            "player1_surname": "", "player2_surname": "", "player1_country": "", "player2_country": "",
+            "player1_surname": side_surnames(p1, bios).upper(), "player2_surname": side_surnames(p2, bios).upper(),
+            "player1_country": c1, "player2_country": c2,
             "matchstatus": "UPCOMING", "is_plan": 1, "winner": "", "winner_name": "",
             "sets_played_count": 0, "game1": "", "game2": "", "player2serve": 0,
             "timestamp": int(time.time()),
         })
-    return rows
+    return rows, covered
 
 
 def set_lta_staged(keys, staged=True, court=None, time_label=None):
@@ -3487,6 +3533,39 @@ def _feed_full_name(name):
     return f"{first.strip()} {surname.strip()}"
 
 
+def _nice_case(word):
+    """'MCGILL' / 'Mcgill' -> 'McGill', "O'NEIL" -> "O'Neil", 'JOHNSON-HAULDREN' -> 'Johnson-Hauldren'."""
+    word = re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), word.lower())
+    # "Mc" is reliably followed by a capital; "Mac" isn't (Macey, Machin), so it's left alone
+    return re.sub(r"\bMc([a-z])", lambda m: "Mc" + m.group(1).upper(), word)
+
+
+def side_surnames(raw, bios):
+    """Surnames only for a side ("Byrne / McGill"), cased from the saved full name where possible."""
+    out = []
+    for p in side_player_entries(raw):
+        name = p["name"]
+        if name.upper() == "TBC":
+            out.append("TBC")
+            continue
+        surname, sep, first = name.partition(",")
+        # Team entries like "Bath Doubles, 1 (W)" aren't "Surname, First" - keep them whole
+        if sep and not re.fullmatch(r"[^\W\d_][^\d(),]*", first.strip()):
+            out.append(name)
+            continue
+        upper, _initial = _feed_name_key(name)
+        cased = ""
+        for source in ((bios.get(p["key"]) or {}).get("display_name") or "", name):
+            i = source.upper().find(upper)
+            if upper and i >= 0 and not source[i:i + len(upper)].isupper():
+                cased = source[i:i + len(upper)]
+                break
+        if cased and cased == cased.capitalize():
+            cased = _nice_case(cased)   # plain "Mcgill" from LTA data -> "McGill"
+        out.append(cased or _nice_case(upper or name))
+    return " / ".join(out)
+
+
 def full_side_name(raw, bios):
     """Side name using each player's saved full name ("William Skidelsky / Aled Smith"), feed name as fallback."""
     return " / ".join(
@@ -3526,8 +3605,9 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW, bios=None):
         "schedtime": str(match.get("schedtime") or ""),
         "winner_name": str(match.get("winner_name") or ""),
 
-        "p1_name": str(match.get("player1") or ""),
-        "p2_name": str(match.get("player2") or ""),
+        # Surnames only for graphics ("Byrne / McGill"); full names are in p1_full_name / p2_full_name
+        "p1_name": side_surnames(p1_raw, bios),
+        "p2_name": side_surnames(p2_raw, bios),
         "p1_surname": str(match.get("player1_surname") or ""),
         "p2_surname": str(match.get("player2_surname") or ""),
         "p1_country": str(match.get("player1_country") or ""),
@@ -3551,6 +3631,9 @@ def vmix_flat_row(match, sets_to_include=VMIX_SETS_PER_ROW, bios=None):
         "serve_number": str(match.get("serve_number") or "") if is_live else "",
         "point_flag": str(match.get("point_flag") or "") if is_live else "",
         "result_note": str(match.get("result_note") or ""),
+        # Where this row's data comes from: "manual" (scored on /score), "staged" (pre-loaded), "tennisticker"
+        "data_source": "manual" if match.get("manual") else "staged" if match.get("staged")
+        else ("tennisticker" if match else ""),
     }
     manual_stats = match.get("manual_stats") or {}
     for side in (1, 2):
@@ -3643,6 +3726,12 @@ def select_match_per_court(all_matches):
         live = [x for x in ms if classify_match_status(x) == "LIVE"]
         if live:
             selected[court] = live[0]
+            continue
+        # Staged (pre-loaded from our own data) beats the feed's other planned matches
+        staged = [x for x in ms if x.get("staged") and classify_match_status(x) == "UPCOMING"]
+        if staged:
+            selected[court] = sorted(staged, key=lambda x: (str(x.get("schedule_date") or ""),
+                                                            str(x.get("schedtime") or "") or "99:99"))[0]
             continue
         upcoming = [x for x in ms if classify_match_status(x) == "UPCOMING"]
         if upcoming:
