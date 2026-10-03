@@ -1672,15 +1672,20 @@ function buildSearchPanel(){
     return el;
 }
 
-function mountSearch(){
+// Call before a re-render replaces the page: remembers whether the search box had focus
+function searchFocusState(){
+    const input = searchPanel && searchPanel.querySelector('#ps-input');
+    return input && document.activeElement === input ? [input.selectionStart, input.selectionEnd] : null;
+}
+
+function mountSearch(focus){
     const host = document.getElementById('search-host');
     if (!host) return;
     if (!searchPanel) searchPanel = buildSearchPanel();
     const input = searchPanel.querySelector('#ps-input');
-    const hadFocus = document.activeElement === input;
-    const sel = hadFocus ? [input.selectionStart, input.selectionEnd] : null;
+    const sel = focus || (document.activeElement === input ? [input.selectionStart, input.selectionEnd] : null);
     if (searchPanel.parentNode !== host) host.appendChild(searchPanel);
-    if (hadFocus){ input.focus(); try { input.setSelectionRange(sel[0], sel[1]); } catch(e){} }
+    if (sel){ input.focus(); try { input.setSelectionRange(sel[0], sel[1]); } catch(e){} }
     else if (!searchState.q && !host.dataset.focused){ host.dataset.focused = '1'; input.focus(); }
 }
 
@@ -1922,17 +1927,18 @@ function render(){
         // Live updates re-render every few seconds; keep each player's text where the commentator scrolled it
         const scrolls = {};
         cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => { scrolls[el.dataset.key] = el.scrollTop; });
+        const searchFocus = searchFocusState();
         cardsEl.className = 'dash-host';
         cardsEl.innerHTML = focusDashboardHTML(FOCUS_COURT, mode);
         cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => {
             if (scrolls[el.dataset.key]) el.scrollTop = scrolls[el.dataset.key];
         });
-        mountSearch();
+        mountSearch(searchFocus);
         fitStage();
     }
 
     const tabs = document.getElementById('court-tabs');
-    tabs.innerHTML = `<a class="court-tab${FOCUS_COURT ? '' : ' active'}" href="/stats">All courts</a>`
+    tabs.innerHTML = `<a class="court-tab${FOCUS_COURT || overviewSearch ? '' : ' active'}" href="/stats">All courts</a>`
         + courts.map(c =>
             `<a class="court-tab${c === FOCUS_COURT ? ' active' : ''}" href="/stats?court=${encodeURIComponent(c)}">${esc(c)}</a>`
         ).join('')
