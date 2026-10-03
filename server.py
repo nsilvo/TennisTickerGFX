@@ -1579,35 +1579,15 @@ def resolve_match(matchid=None, court=None, auto_single_live=False, fallback_any
 
     if court_token or court_number:
         if court_matches:
-            live = [
-                x for x in court_matches
-                if "IN PROGRESS" in str(x.get("matchstatus", "")).upper()
-                or "TEST" in str(x.get("matchstatus", "")).upper()
-                or "WARMUP" in str(x.get("matchstatus", "")).upper()
-            ]
-            if live:
-                return live[0]
+            # Same rule as the vMix feed, so overlays and vMix always agree
+            return pick_court_match(court_matches)
 
-            upcoming = [
-                x for x in court_matches
-                if x.get("is_plan") or "UPCOMING" in str(x.get("matchstatus", "")).upper()
-            ]
-            if upcoming:
-                return sorted(upcoming, key=lambda x: str(x.get("schedtime") or ""))[0]
-
-            completed = [
-                x for x in court_matches
-                if x.get("winner_name") or "COMPLETED" in str(x.get("matchstatus", "")).upper()
-                or "FINISHED" in str(x.get("matchstatus", "")).upper()
-            ]
-            if completed:
-                return sorted(completed, key=lambda x: x.get("timestamp") or 0, reverse=True)[0]
-
-            return court_matches[0]
-
-    # 1) Explicit matchid
+    # 1) Explicit matchid (a staged match's id follows it once TennisTicker carries it)
     if matchid:
         m = next((x for x in all_matches if str(x.get("matchid")) == str(matchid)), None)
+        if m is None:
+            alias = staged_match_alias(matchid)
+            m = next((x for x in all_matches if str(x.get("matchid")) == alias), None) if alias else None
         if m:
             return m
 
@@ -2996,6 +2976,10 @@ def load_lta_schedule(mgr):
                 target.update(json.loads(raw))
             except ValueError:
                 print(f"Ignoring unreadable setting {key}")
+    if lta_schedule.get("tournament_name"):
+        lta_schedule["tournament_name"] = _lta_tournament_name(lta_schedule["tournament_name"])
+        if lta_schedule["tournament_name"].lower() == "matches":
+            lta_schedule["tournament_name"] = ""
 
 
 def save_lta_schedule():
@@ -3100,7 +3084,7 @@ def refresh_lta_schedule(source=None):
             page = session.get(f"{LTA_BASE}/tournament/{tid}/Matches", timeout=30).text
             days = sorted(set(re.findall(r'MatchesInDay\?date=(\d{8})', page)))
             title = re.search(r'<title>(.*?)</title>', page, re.S)
-            tournament_name = _lta_text(title.group(1)).split(" - ")[0].split(" | ")[0] if title else ""
+            tournament_name = _lta_tournament_name(_lta_text(title.group(1))) if title else ""
             matches = []
             for day in days:
                 matches.extend(lta_matches_in_day(session, tid, day))
@@ -3257,6 +3241,19 @@ def _staged_side(side, bios):
     return " / ".join(names) or "TBC", code
 
 
+def lta_sport():
+    """'padel' or 'tennis' for the loaded LTA tournament (from its name)."""
+    return "padel" if "padel" in (lta_schedule.get("tournament_name") or "").lower() else "tennis"
+
+
+def _lta_tournament_name(title_text):
+    """'Matches - LTA Padel National Championships 2026 | LTA - Tennis for Britain' -> the tournament name."""
+    name = title_text.split(" | ")[0].strip()
+    if " - " in name and name.split(" - ", 1)[0].strip().lower() in ("matches", "players", "draws", "events", "overview"):
+        name = name.split(" - ", 1)[1].strip()
+    return name
+
+
 def staged_match_rows(feed_rows):
     """
     Synthetic upcoming match rows for staged LTA matches, built from our own data
@@ -3299,6 +3296,7 @@ def staged_match_rows(feed_rows):
             "schedule_date": e["date"],
             "matchname": " ".join(x for x in (e["event"], e["round"]) if x),
             "tname": lta_schedule.get("tournament_name") or same_court_tname or tname_default,
+            "sport": lta_sport(),
             "tournid": "",
             "player1": p1, "player2": p2, "player1_full": p1, "player2_full": p2,
             "player1_surname": side_surnames(p1, bios).upper(), "player2_surname": side_surnames(p2, bios).upper(),
@@ -3308,6 +3306,35 @@ def staged_match_rows(feed_rows):
             "timestamp": int(time.time()),
         })
     return rows, covered
+
+
+def staged_match_alias(matchid):
+    """
+    The TennisTicker match id a staged match ("lta-…") became: its linked id, or
+    the feed match with the same players today. None if it's still only staged.
+    """
+    matchid = str(matchid or "")
+    if not matchid.startswith(STAGED_PREFIX) or manager is None:
+        return None
+    entry = next((e for e in lta_schedule.get("matches", []) if e["key"] == matchid[len(STAGED_PREFIX):]), None)
+    if not entry:
+        return None
+    feed = manager.get_latest_data(all_tournaments=True)
+    ids = {str(m.get("matchid")) for m in feed}
+    if entry.get("tt_matchid") in ids:
+        return entry["tt_matchid"]
+    today = datetime.now().strftime("%Y-%m-%d")
+    if entry["date"] == today:
+        twin = next((m for m in feed if not m.get("staged") and lta_orientation(m, entry)), None)
+        if twin:
+            return str(twin.get("matchid"))
+    return None
+
+
+def staged_ids_for(tt_matchid):
+    """Staged ids ("lta-…") whose match is now this TennisTicker match."""
+    return [STAGED_PREFIX + e["key"] for e in lta_schedule.get("matches", [])
+            if e.get("tt_matchid") == str(tt_matchid)]
 
 
 def set_lta_staged(keys, staged=True, court=None, time_label=None):
@@ -3992,28 +4019,29 @@ def select_match_per_court(all_matches):
         if court:
             by_court.setdefault(court, []).append(m)
 
-    selected = {}
-    for court, ms in by_court.items():
-        live = [x for x in ms if classify_match_status(x) == "LIVE"]
-        if live:
-            selected[court] = live[0]
-            continue
-        # Staged (pre-loaded from our own data) beats the feed's other planned matches
-        staged = [x for x in ms if x.get("staged") and classify_match_status(x) == "UPCOMING"]
-        if staged:
-            selected[court] = sorted(staged, key=lambda x: (str(x.get("schedule_date") or ""),
-                                                            str(x.get("schedtime") or "") or "99:99"))[0]
-            continue
-        upcoming = [x for x in ms if classify_match_status(x) == "UPCOMING"]
-        if upcoming:
-            selected[court] = sorted(upcoming, key=lambda x: str(x.get("schedtime") or ""))[0]
-            continue
-        completed = [x for x in ms if classify_match_status(x) == "COMPLETED"]
-        if completed:
-            selected[court] = sorted(completed, key=lambda x: x.get("timestamp") or 0, reverse=True)[0]
-            continue
-        selected[court] = ms[0]
-    return selected
+    return {court: pick_court_match(ms) for court, ms in by_court.items()}
+
+
+def pick_court_match(ms):
+    """
+    The one match a court shows (vMix and overlays): live, then staged (pre-loaded
+    from our own data, earliest first), then the feed's next planned match, then the
+    most recently completed.
+    """
+    live = [x for x in ms if classify_match_status(x) == "LIVE"]
+    if live:
+        return live[0]
+    staged = [x for x in ms if x.get("staged") and classify_match_status(x) == "UPCOMING"]
+    if staged:
+        return sorted(staged, key=lambda x: (str(x.get("schedule_date") or ""),
+                                             str(x.get("schedtime") or "") or "99:99"))[0]
+    upcoming = [x for x in ms if classify_match_status(x) == "UPCOMING"]
+    if upcoming:
+        return sorted(upcoming, key=lambda x: str(x.get("schedtime") or ""))[0]
+    completed = [x for x in ms if classify_match_status(x) == "COMPLETED"]
+    if completed:
+        return sorted(completed, key=lambda x: x.get("timestamp") or 0, reverse=True)[0]
+    return ms[0] if ms else None
 
 
 @app.route('/api/v1/vmix', methods=['GET'])
