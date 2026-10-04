@@ -2590,6 +2590,83 @@ def get_match_history_api(match_id):
     })
 
 
+# TennisTicker's per-match statistics (the feed's <stats>1</stats> flag says they exist).
+# Same source as the stats pop-up on scores.tennisticker.de; "tournid" here is the match id.
+TT_STATS_URL = os.getenv("TT_STATS_URL") or \
+    "https://scores.tennisticker.de/scoreboard/livescores.aspx?userid=33925432USPL&contract=STATS&tournid="
+TT_STATS_CACHE_SEC = 10
+TT_STAT_ROWS = (   # (xml tag, label) in TennisTicker's own order
+    ("ace", "Aces"), ("dft", "Double faults"), ("s1p", "1st serve in"), ("s2p", "2nd serve in"),
+    ("s1w", "1st serve points won"), ("s2w", "2nd serve points won"), ("gpw", "Game points won"),
+    ("bps", "Break points saved"), ("r1w", "1st return points won"), ("r2w", "2nd return points won"),
+    ("bpw", "Break points won"), ("tpw", "Total points won"),
+)
+_tt_stats_cache = {}   # matchid -> (fetched_at, payload)
+
+
+def parse_tt_stats(xml_text):
+    """TennisTicker stats XML -> {"p1", "p2", "live", "periods": [{"label", "rows": [...]}]}, or None."""
+    try:
+        match = ET.fromstring(xml_text).find("match")
+    except ET.ParseError:
+        return None
+    if match is None:
+        return None
+    periods = []
+    for node in match:
+        if node.tag not in ("total", "set"):
+            continue
+        rows = []
+        for tag, label in TT_STAT_ROWS:
+            el = node.find(tag)
+            if el is None:
+                continue
+            a = el.attrib
+            count = a.get("t") == "s"   # plain counts (aces, double faults); the rest are made/attempted
+            pct = lambda side: _int_or_none(a.get(f"p{side}p"))
+            rows.append({
+                "key": tag, "label": label, "kind": "count" if count else "ratio",
+                "p1": a.get("p1v", ""), "p2": a.get("p2v", ""),
+                "p1_pct": None if count else pct(1), "p2_pct": None if count else pct(2),
+            })
+        sn = node.get("sn", "0")
+        periods.append({"label": "Match" if node.tag == "total" else f"Set {sn}", "rows": rows})
+    if not periods:
+        return None
+    return {"p1": match.get("p1", ""), "p2": match.get("p2", ""), "live": match.get("mstat") == "3",
+            "periods": periods}
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route('/api/v1/match/<match_id>/tt_stats', methods=['GET'])
+def get_match_tt_stats(match_id):
+    """TennisTicker's serve/return statistics for one match (whole match + each set), when it has them."""
+    match_id = str(match_id).strip()
+    if not match_id.isdigit():   # staged LTA matches ("lta-...") are not TennisTicker matches
+        return jsonify({"status": "success", "matchid": match_id, "available": False})
+    cached = _tt_stats_cache.get(match_id)
+    if cached and time.time() - cached[0] < TT_STATS_CACHE_SEC:
+        return jsonify(cached[1])
+    try:
+        response = requests.get(TT_STATS_URL + match_id, timeout=5)
+        response.raise_for_status()
+        stats = parse_tt_stats(response.content.decode('utf-8'))
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching TennisTicker stats for {match_id}: {e}")
+        if cached:
+            return jsonify(cached[1])   # keep showing the last stats we had
+        return jsonify({"status": "error", "matchid": match_id, "available": False}), 502
+    payload = {"status": "success", "matchid": match_id, "available": bool(stats), **(stats or {})}
+    _tt_stats_cache[match_id] = (time.time(), payload)
+    return jsonify(payload)
+
+
 # ====================================================================
 # Manual scoring: a commentator scores the match they are watching
 # ====================================================================

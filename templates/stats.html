@@ -259,6 +259,10 @@ body.screen-mode details.data-table { display: none; }
 .tape-headline strong { color: var(--test-color); }
 .tape-names { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); gap: 10px; font-weight: 700; font-size: 0.92rem; margin-bottom: 6px; }
 .tape-names span:first-child { text-align: right; }
+.tt-periods { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.tt-period { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--muted-text);
+    border-radius: 999px; padding: 3px 12px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+.tt-period.active { background: rgba(255,255,255,0.16); color: #fff; }
 .tape-names .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin: 0 6px; vertical-align: 0; }
 .tape-row { display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); gap: 10px; align-items: center; padding: 3px 0; }
 .tape-label { text-align: center; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-text); }
@@ -985,6 +989,58 @@ function syncHistory(){
             });
         }
     }
+}
+
+// TennisTicker's own match statistics (feed flag stats_match), refreshed while the match is live
+const TT_STATS_REFRESH_MS = 15000;
+let ttStats = { id: null, data: null, fetchedAt: 0, loading: false, period: 'Match' };
+
+function hasTTStats(m){ return m && Number(m.stats_match) > 0 && /^\d+$/.test(String(m.matchid || '')); }
+
+function syncTTStats(){
+    const cur = FOCUS_COURT ? pickCurrent(matchesForCourt(FOCUS_COURT)) : null;
+    if (!hasTTStats(cur)){ ttStats.id = null; ttStats.data = null; return; }
+    const id = String(cur.matchid);
+    if (id !== ttStats.id){ ttStats = { id, data: null, fetchedAt: 0, loading: false, period: 'Match' }; }
+    const stale = !ttStats.fetchedAt || (statusBucket(cur) === 'LIVE' && Date.now() - ttStats.fetchedAt > TT_STATS_REFRESH_MS);
+    if (!stale || ttStats.loading) return;
+    ttStats.loading = true;
+    fetch(`/api/v1/match/${encodeURIComponent(id)}/tt_stats`)
+        .then(r => r.json())
+        .then(j => {
+            if (ttStats.id !== id) return; // court moved on
+            ttStats.data = j.available ? j : null;
+            render();
+        })
+        .catch(() => {})
+        .finally(() => { if (ttStats.id === id){ ttStats.loading = false; ttStats.fetchedAt = Date.now(); } });
+}
+
+function ttStatsHTML(m){
+    const d = ttStats.data;
+    if (!d || ttStats.id !== String(m.matchid)) return '';
+    const period = d.periods.find(p => p.label === ttStats.period) || d.periods[0];
+    const pick = d.periods.length > 1 ? `<span class="tt-periods">${d.periods.map(p =>
+        `<button type="button" class="tt-period${p === period ? ' active' : ''}" data-tt-period="${esc(p.label)}">${esc(p.label)}</button>`).join('')}</span>` : '';
+    const rows = period.rows.map(r => {
+        if (r.kind === 'count'){
+            const a = toInt(r.p1), b = toInt(r.p2), most = Math.max(a, b, 1);
+            return tapeRow(r.label, a, b, { fmt: String, size: v => v / most, score: v => v, lowerBetter: r.key === 'dft' });
+        }
+        const val = side => ({ txt: r[`p${side}`], pct: r[`p${side}_pct`] });
+        const shown = v => v.txt && v.txt !== '0/0';
+        return tapeRow(r.label, shown(val(1)) ? val(1) : null, shown(val(2)) ? val(2) : null,
+            { fmt: v => `${v.pct}% · ${v.txt}`, size: v => (v.pct || 0) / 100, score: v => v.pct || 0 });
+    }).join('');
+    const n1 = fullSideName(m.player1_full || m.player1) || 'Side 1';
+    const n2 = fullSideName(m.player2_full || m.player2) || 'Side 2';
+    return `<div class="card">
+        <div class="section-label"><span>Match statistics</span><span>TennisTicker${d.live ? ' · live' : ''}</span></div>
+        ${pick}
+        <div class="tape-names"><span>${esc(n1)}<span class="swatch" style="background:${SIDE_COLORS[1]}"></span></span><span></span>
+            <span><span class="swatch" style="background:${SIDE_COLORS[2]}"></span>${esc(n2)}</span></div>
+        ${rows}
+    </div>`;
 }
 
 function svgPath(points, step){
@@ -1900,6 +1956,7 @@ function focusDashboardHTML(court, mode){
                 ${extras ? `<div class="card">${extras}</div>` : ''}
             </div>
             <div class="dash-col">
+                ${ttStatsHTML(current)}
                 ${taleOfTapeHTML(current)}
                 ${charts ? `<div class="card">${charts}</div>` : ''}
             </div>
@@ -1962,6 +2019,7 @@ function courtCardHTML(court){
 
 function render(){
     syncHistory();
+    syncTTStats();
     const courts = allCourts();
     const mode = layoutMode();
     const cardsEl = document.getElementById('cards');
@@ -2040,6 +2098,8 @@ document.getElementById('cards').addEventListener('click', e => {
     if (btn) setLayout(btn.dataset.layout);
     const tabBtn = e.target.closest('.view-tab');
     if (tabBtn) setTab(tabBtn.dataset.tab);
+    const periodBtn = e.target.closest('[data-tt-period]');
+    if (periodBtn){ ttStats.period = periodBtn.dataset.ttPeriod; render(); }
 });
 document.getElementById('cards').addEventListener('change', e => {
     if (!e.target.matches('.court-select')) return;
