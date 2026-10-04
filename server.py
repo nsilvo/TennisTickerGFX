@@ -1007,7 +1007,6 @@ class XMLCacheManager:
 
                 # --- Status handling ---
                 status_raw = get_text_or_default('matchstatus', default='').strip()
-                win_type = get_text_or_default('wintype', default='').strip()
 
                 if is_completed and not status_raw:
                     status_raw = "Completed"
@@ -1016,9 +1015,10 @@ class XMLCacheManager:
                     # planned matches are always treated as UPCOMING
                     status_raw = "UPCOMING"
 
-                # If status is WARMUP and win_type is COMPLETED, treat as live warmup
-                if status_raw.upper() == "WARMUP" and win_type.upper() == "COMPLETED":
-                    status_raw = "WARMUP"  # Keep as WARMUP to be treated as live
+                # TennisTicker sends warm-up as "(Warm Up)" (with wintype "Completed"); everything
+                # downstream looks for "WARMUP" to treat the match as live
+                if re.sub(r'[^A-Z]', '', status_raw.upper()) == "WARMUP":
+                    status_raw = "(warmup)"
 
                 # --- sets played ---
                 if is_plan:
