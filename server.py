@@ -272,13 +272,17 @@ class XMLCacheManager:
                 notes TEXT,
                 lta_url TEXT,
                 lta_stats TEXT,
+                padel_id TEXT,
+                padel_stats TEXT,
+                fip_url TEXT,
+                fip_stats TEXT,
                 updated_at INTEGER
             );
         """)
-        # Migrations for DBs created before lta_url / lta_stats existed. Commit first:
+        # Migrations for DBs created before the lta_* / padel_* / fip_* columns existed. Commit first:
         # on Postgres a failed ALTER's rollback would otherwise undo the CREATEs above.
         self.conn.commit()
-        for column in ("lta_url", "lta_stats"):
+        for column in ("lta_url", "lta_stats", "padel_id", "padel_stats", "fip_url", "fip_stats"):
             try:
                 cursor.execute(f"ALTER TABLE player_bios ADD COLUMN {column} TEXT")
                 self.conn.commit()
@@ -501,9 +505,11 @@ class XMLCacheManager:
     # Player bios (commentator spotter data entered via /players)
     # ----------------------------------------------------------------
 
-    # lta_stats is JSON scraped from the LTA profile (records, form, titles)
+    # lta_stats is JSON scraped from the LTA profile (records, form, titles);
+    # padel_stats is JSON from Padel API (pro ranking, Elo, career stats, partner);
+    # fip_stats is scraped from padelfip.com to fill gaps (record, titles, coaches)
     PLAYER_BIO_FIELDS = ("display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
-                         "lta_stats")
+                         "lta_stats", "padel_id", "padel_stats", "fip_url", "fip_stats")
 
     # ---- uploaded media (stored in the database) ----
 
@@ -3074,7 +3080,7 @@ def match_lta_player_key(player, known_keys):
 # player names on import instead of trusting player_key.
 BIO_CSV_COLUMNS = ("player_key", "lta_first", "lta_surname",
                    "display_name", "country", "born", "plays", "hometown", "career", "notes", "lta_url",
-                   "lta_stats")
+                   "lta_stats", "padel_id", "padel_stats", "fip_url", "fip_stats")
 
 
 def scrape_lta_tournament(tournament_id, progress=None):
@@ -3160,8 +3166,9 @@ def merge_bio_rows(rows, overwrite=False):
         else:
             fields = {c: existing.get(c) or incoming[c] for c in manager.PLAYER_BIO_FIELDS}
         # Scraped stats are machine data: a newer scrape always refreshes them
-        if incoming['lta_stats']:
-            fields['lta_stats'] = incoming['lta_stats']
+        for col in ('lta_stats', 'padel_stats', 'fip_stats'):
+            if incoming[col]:
+                fields[col] = incoming[col]
         if existing and all((existing.get(c) or '') == fields[c] for c in manager.PLAYER_BIO_FIELDS):
             unchanged += 1
             continue
@@ -3242,6 +3249,600 @@ def players_export_csv():
     response.headers['Content-Type'] = 'text/csv; charset=utf-8'
     response.headers['Content-Disposition'] = 'attachment; filename=player_bios.csv'
     return response
+
+
+# ====================================================================
+# Padel API import (padelapi.org): pro ranking, Elo, career stats,
+# partner, age, height, side for players on the FIP / Premier Padel tours
+# ====================================================================
+PADEL_API_BASE = "https://padelapi.org/api"
+# The free plan allows 10 requests a minute; raise for paid plans (Plus/Pro 60, Business 500)
+PADEL_API_RATE_PER_MIN = int(os.getenv("PADEL_API_RATE_PER_MIN", "10"))
+PADEL_API_SEARCH_BATCH = 10    # names per /players search (the API takes comma-separated names)
+PADEL_API_REFRESH_HOURS = 20   # players fetched more recently than this are skipped on import
+# Feed / LTA countries -> ISO alpha-2, for telling same-named players apart
+PADEL_COUNTRY_CODES = {"GBR": "GB", "GREAT BRITAIN": "GB", "UNITED KINGDOM": "GB", "ENGLAND": "GB", "ENG": "GB",
+                       "SCOTLAND": "GB", "SCO": "GB", "WALES": "GB", "WAL": "GB", "IRL": "IE", "IRELAND": "IE",
+                       "ESP": "ES", "SPAIN": "ES", "ARG": "AR", "ARGENTINA": "AR", "ITA": "IT", "ITALY": "IT",
+                       "FRA": "FR", "FRANCE": "FR", "POR": "PT", "PRT": "PT", "PORTUGAL": "PT", "BEL": "BE",
+                       "BELGIUM": "BE", "NED": "NL", "NLD": "NL", "NETHERLANDS": "NL", "SWE": "SE", "SWEDEN": "SE",
+                       "GER": "DE", "DEU": "DE", "GERMANY": "DE", "USA": "US", "UNITED STATES": "US",
+                       "BRA": "BR", "BRAZIL": "BR", "MEX": "MX", "MEXICO": "MX", "CHI": "CL", "CHL": "CL",
+                       "CHILE": "CL", "PAR": "PY", "PRY": "PY", "PARAGUAY": "PY", "URU": "UY", "URY": "UY",
+                       "QAT": "QA", "QATAR": "QA", "UAE": "AE", "ARE": "AE", "DEN": "DK", "DNK": "DK",
+                       "FIN": "FI", "FINLAND": "FI", "SUI": "CH", "CHE": "CH", "SWITZERLAND": "CH",
+                       "AUT": "AT", "AUSTRIA": "AT", "POL": "PL", "POLAND": "PL", "EGY": "EG", "EGYPT": "EG"}
+PADEL_ROUNDS = {1: "a final", 2: "a semi-final", 4: "a quarter-final", 8: "the last 16", 16: "the last 32"}
+
+padel_import_status = {"running": False, "done": 0, "total": 0, "message": "", "error": ""}
+
+
+class PadelApiError(Exception):
+    pass
+
+
+class PadelApiPlanError(PadelApiError):
+    """402: the endpoint isn't part of the token's plan."""
+
+
+class PadelApiClient:
+    """Bearer-token client that spaces requests out to stay inside the plan's per-minute limit."""
+
+    def __init__(self, token, per_minute=None):
+        self.session = requests.Session()
+        self.session.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        self.interval = 60.0 / max(1, per_minute or PADEL_API_RATE_PER_MIN)
+        self.last_call = 0.0
+        self.remaining = None   # X-RateLimit-Remaining from the last response
+        self.stats_in_plan = True   # /players/{id}/stats needs a paid plan; set False after a 402
+        self.lock = Lock()
+
+    def get(self, path, **params):
+        for attempt in range(3):
+            with self.lock:
+                wait = self.last_call + self.interval - time.time()
+                if wait > 0:
+                    time.sleep(wait)
+                self.last_call = time.time()
+                resp = self.session.get(f"{PADEL_API_BASE}{path}", params=params, timeout=30)
+            self.remaining = resp.headers.get("X-RateLimit-Remaining", self.remaining)
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(int(resp.headers.get("Retry-After") or 60))
+                continue
+            if resp.status_code == 401:
+                raise PadelApiError("Padel API rejected the token - check it on the Players page.")
+            if resp.status_code == 402:
+                raise PadelApiPlanError(f"Padel API: {path} isn't included in your plan.")
+            if resp.status_code == 429:
+                raise PadelApiError("Padel API rate limit reached - try again later.")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        return None
+
+
+def padel_api_token():
+    """Token saved on the Players page, else the PADEL_API_TOKEN env var."""
+    return ((manager.get_setting("padel_api_token") if manager else None)
+            or os.getenv("PADEL_API_TOKEN", "")).strip()
+
+
+def _padel_name(name):
+    """'Agustín  Tapia-Gómez' -> 'agustin tapia gomez' (the API strips accents too)."""
+    import unicodedata
+    plain = unicodedata.normalize('NFKD', name or '').encode('ascii', 'ignore').decode()
+    return " ".join(re.findall(r'[a-z]+', plain.lower()))
+
+
+def _padel_country(country):
+    country = (country or '').strip().upper()
+    return PADEL_COUNTRY_CODES.get(country, country if len(country) == 2 else '')
+
+
+def padel_search_name(key, bio, feed_name=""):
+    """'First Surname' to search for, or "" when only an initial is known ("SMITH J")."""
+    name = _padel_name(bio.get('display_name') or _feed_full_name(feed_name or key))
+    words = name.split()
+    return name if len(words) >= 2 and min(len(words[0]), len(words[-1])) >= 2 else ""
+
+
+def padel_search(client, names):
+    """Every API player matching any of the names (one paginated search per batch)."""
+    found = []
+    for i in range(0, len(names), PADEL_API_SEARCH_BATCH):
+        page = 1
+        while True:
+            resp = client.get("/players", name=",".join(names[i:i + PADEL_API_SEARCH_BATCH]), page=page)
+            found.extend((resp or {}).get("data") or [])
+            meta = (resp or {}).get("meta") or {}
+            if not meta or meta.get("current_page", 1) >= meta.get("last_page", 1):
+                break
+            page += 1
+    return found
+
+
+def padel_match_player(name, country, results):
+    """
+    The API player for a "first surname" name, or None unless exactly one fits.
+    Exact names win; failing that a profile with extra surnames ("ariana sanchez"
+    -> "Ariana Sanchez Fallada"). Nationality breaks ties.
+    """
+    exact = [p for p in results if _padel_name(p.get("name")) == name]
+    candidates = exact or [p for p in results if _padel_name(p.get("name")).startswith(name + " ")]
+    code = _padel_country(country)
+    if len(candidates) > 1 and code:
+        candidates = [p for p in candidates if p.get("nationality") == code]
+    unique = {p["id"]: p for p in candidates}
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def padel_player_details(client, player):
+    """API player resource + stats + current partner -> the dict stored as player_bios.padel_stats."""
+    pid = player["id"]
+    details = {k: player.get(k) for k in ("id", "name", "category", "nationality", "ranking", "points", "elo",
+                                          "height", "side", "hand", "birthplace", "birthdate", "age", "url",
+                                          "photo_url")}
+    stats = {}
+    if client.stats_in_plan:
+        try:
+            stats = client.get(f"/players/{pid}/stats") or {}
+        except PadelApiPlanError:
+            client.stats_in_plan = False   # don't spend the rest of the run's quota on it
+    details["stats"] = {k: stats.get(k) for k in ("matches_played", "matches_won", "win_percentage", "sets_won",
+                                                  "sets_lost", "games_won", "games_lost", "titles", "finals",
+                                                  "semifinals", "best_round", "performance_since", "coverage")}
+    pairs = client.get(f"/players/{pid}/pairs") or []
+    pairs = pairs.get("data") or [] if isinstance(pairs, dict) else pairs
+    # The pair marked current, else whoever they played with most recently
+    latest = max(pairs, key=lambda p: (p.get("status") == "current", p.get("last_match_at") or ""), default=None)
+    partner = next((p for p in (latest or {}).get("players") or [] if p.get("id") != pid), None)
+    details["partner"] = ({"id": partner.get("id"), "name": partner.get("name"),
+                           "nationality": partner.get("nationality"), "ranking": partner.get("ranking"),
+                           "last_match_at": (latest.get("last_match_at") or "")[:10]} if partner else {})
+    details["scraped"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    return details
+
+
+def padel_bio_fields(details):
+    """Padel API facts for empty born / plays columns, plus the padel_* columns themselves."""
+    born = ""
+    if details.get("birthdate"):
+        y, m, d = details["birthdate"][:10].split("-")
+        born = f"{d}/{m}/{y}"
+    born = ", ".join(x for x in (born, details.get("birthplace")) if x)
+    side = {"drive": "Drive (right) side", "backhand": "Backhand (left) side"}.get(details.get("side") or "", "")
+    hand = f"{details['hand'].title()}-handed" if details.get("hand") else ""
+    return {"born": born, "plays": ", ".join(x for x in (hand, side) if x),
+            "padel_id": str(details.get("id") or ""), "padel_stats": json.dumps(details, ensure_ascii=False)}
+
+
+def parse_padel_stats(bio):
+    """Structured Padel API data saved on a bio, or {}."""
+    try:
+        stats = json.loads((bio or {}).get('padel_stats') or '{}')
+        return stats if isinstance(stats, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def padel_talking_points(details, name="", split=False):
+    """Commentator-ready sentences from Padel API data (split=True: (performance, background))."""
+    if not details:
+        return ([], []) if split else []
+    points, background = [], []
+    first = (name or details.get("name") or "").split(" ")[0] or "They"
+    tour = {"men": "men's", "women": "women's"}.get(details.get("category"), "")
+    if details.get("ranking"):
+        line = f"World number {details['ranking']} in the official {tour} padel ranking".replace("  ", " ")
+        if details.get("points"):
+            line += f" with {details['points']} points"
+        points.append(line + ".")
+    stats = details.get("stats") or {}
+    played, won = stats.get("matches_played") or 0, stats.get("matches_won") or 0
+    if played >= 5:
+        since = (stats.get("performance_since") or "")[:4]
+        points.append(f"Pro tour record of {_wl([won, played - won])}" + (f" since {since}." if since else "."))
+    titles, finals = stats.get("titles") or 0, stats.get("finals") or 0
+    if titles or finals:
+        parts = [f"{titles} pro title{'s' if titles != 1 else ''}"] if titles else []
+        if finals:
+            parts.append(f"{finals} final{'s' if finals != 1 else ''}")
+        points.append(f"{first} has " + " from ".join(parts) + ".")
+    elif stats.get("best_round") in PADEL_ROUNDS and played >= 5:
+        points.append(f"Best pro run so far: {PADEL_ROUNDS[stats['best_round']]}.")
+    if details.get("elo"):
+        background.append(f"Padel API Elo rating {details['elo']}.")
+
+    partner = details.get("partner") or {}
+    if partner.get("name"):
+        background.append(f"Most recent pro partner: {partner['name']}" +
+                          (f" ({partner['nationality']})" if partner.get("nationality") else "") + ".")
+    who = []
+    if details.get("age"):
+        who.append(f"{details['age']} years old")
+    if details.get("birthplace"):
+        who.append(f"born in {details['birthplace']}")
+    if details.get("height"):
+        who.append(f"{details['height'] / 100:.2f} m tall")
+    if who:
+        background.append(f"{first} is " + ", ".join(who) + ".")
+    side = {"drive": "drive (right)", "backhand": "backhand (left)"}.get(details.get("side") or "")
+    if side or details.get("hand") == "left":
+        line = f"Plays the {side} side" if side else "Plays"
+        if details.get("hand") == "left":
+            line += " and is left-handed" if side else " left-handed"
+        background.append(line + ".")
+    return (points, background) if split else points + background
+
+
+def padel_fetch_by_id(client, padel_id):
+    player = client.get(f"/players/{padel_id}")
+    player = (player or {}).get("data", player) if isinstance(player, dict) else None
+    return padel_player_details(client, player) if player and player.get("id") else None
+
+
+def _padel_bio_update(bio, details):
+    """Bio columns after adding Padel API data: staff-entered born / plays are never replaced."""
+    found = padel_bio_fields(details)
+    fields = {c: bio.get(c) or '' for c in manager.PLAYER_BIO_FIELDS}
+    for col in ("born", "plays"):
+        fields[col] = fields[col] or found[col]
+    fields["padel_id"], fields["padel_stats"] = found["padel_id"], found["padel_stats"]
+    return fields
+
+
+def run_padel_import(token, force=False):
+    """
+    Background job: match every known player to Padel API and save their pro data.
+    Players with a saved Padel API ID are refreshed by ID; the rest are searched by
+    name in batches. Requests are throttled to the plan's per-minute limit.
+    """
+    status = padel_import_status
+    try:
+        client = PadelApiClient(token)
+        players = collect_known_players()
+        bios = manager.get_all_player_bios(include_aliases=False)
+        cutoff = (datetime.now() - timedelta(hours=PADEL_API_REFRESH_HOURS)).strftime("%Y-%m-%d %H:%M")
+        by_id, by_name, fresh = {}, {}, 0
+        for key, info in players.items():
+            bio = bios.get(key) or {}
+            if not force and (parse_padel_stats(bio).get("scraped") or "") > cutoff:
+                fresh += 1
+            elif bio.get('padel_id'):
+                by_id[key] = bio['padel_id']
+            else:
+                name = padel_search_name(key, bio, info["name"])
+                if name:
+                    by_name[key] = (name, bio.get('country') or info["country"])
+
+        status.update(message=f"Searching Padel API for {len(by_name)} player name(s)…")
+        results = padel_search(client, sorted({n for n, _c in by_name.values()}))
+        matched = {key: padel_match_player(name, country, results) for key, (name, country) in by_name.items()}
+        todo = [(key, None, pid) for key, pid in by_id.items()] + [(k, p, None) for k, p in matched.items() if p]
+
+        saved, failed = [], []
+        status.update(done=0, total=len(todo))
+        for n, (key, player, pid) in enumerate(todo, start=1):
+            status.update(done=n, message=f"Fetching Padel API stats {n}/{len(todo)}"
+                                           f" ({n * 2 * client.interval / 60:.0f} of ~{len(todo) * 2 * client.interval / 60:.0f} min)…")
+            try:
+                details = padel_fetch_by_id(client, pid) if pid else padel_player_details(client, player)
+                if details and manager.save_player_bio(key, _padel_bio_update(bios.get(key) or {}, details)):
+                    saved.append(key)
+                else:
+                    failed.append(key)
+            except PadelApiError:
+                raise
+            except Exception as e:
+                print(f"Padel API import: failed for {key}: {e}")
+                failed.append(key)
+
+        not_found = len(by_name) - sum(1 for p in matched.values() if p)
+        status["message"] = (f"Padel API import finished: {len(saved)} player(s) updated, {not_found} not found"
+                             f" on Padel API (it covers pro tours only), {fresh} already up to date.")
+        if failed:
+            status["message"] += " Failed: " + ", ".join(failed)
+        if not client.stats_in_plan:
+            status["message"] += " Career stats (titles, win-loss) need a higher Padel API plan, so were skipped."
+        if client.remaining is not None:
+            status["message"] += f" {client.remaining} request(s) left this minute."
+    except Exception as e:
+        status["error"] = f"Padel API import failed: {e}"
+    finally:
+        status["running"] = False
+
+
+@app.route('/api/v1/padel_import', methods=['GET', 'POST'])
+def api_padel_import():
+    """POST: start matching every known player to Padel API ({force: 1} refetches all). GET: progress."""
+    if request.method == 'POST':
+        if manager is None:
+            return jsonify({"error": "Cache manager not initialized."}), 503
+        if padel_import_status["running"]:
+            return jsonify({"error": "A Padel API import is already running.", **padel_import_status}), 409
+        token = padel_api_token()
+        if not token:
+            return jsonify({"error": "Save your Padel API token first."}), 400
+        force = (request.form.get('force') or (request.get_json(silent=True) or {}).get('force')) in ('1', 1, True)
+        padel_import_status.update(running=True, done=0, total=0, error="", message="Starting Padel API import…")
+        Thread(target=run_padel_import, args=(token, force), daemon=True).start()
+    return jsonify({**padel_import_status, "has_token": bool(padel_api_token())})
+
+
+# ====================================================================
+# FIP website (padelfip.com): scraped to fill what Padel API lacks -
+# players outside its coverage (e.g. FIP Beyond), season / career
+# win-loss, titles, best rank, latest results and coaches
+# ====================================================================
+FIP_BASE = "https://www.padelfip.com"
+FIP_PLAYER_URL_RE = re.compile(r'^https?://(?:www\.)?padelfip\.com/player/[a-z0-9-]+/?$', re.I)
+FIP_HEADERS = {"User-Agent": "Mozilla/5.0 (TennisTickerGFX player import)"}
+FIP_IMPORT_WORKERS = 4
+
+fip_import_status = {"running": False, "done": 0, "total": 0, "message": "", "error": ""}
+
+
+def fip_session():
+    session = requests.Session()
+    session.headers.update(FIP_HEADERS)
+    return session
+
+
+def fip_find_player(session, name, country=''):
+    """
+    padelfip.com profile URL for a normalised "first surname", or "" unless one
+    profile fits. Exact names win, then profiles adding surnames; country breaks ties.
+    """
+    resp = session.get(f"{FIP_BASE}/wp-json/wp/v2/player",
+                       params={"search": name, "per_page": 50, "_fields": "link,title"}, timeout=30)
+    resp.raise_for_status()
+    # Pairs have their own entries ("Ariana Sanchez / Paula Josemaria"): skip them
+    found = [(_padel_name(_lta_text(p["title"]["rendered"])), p["link"]) for p in resp.json()
+             if "/" not in p["title"]["rendered"]]
+    candidates = [link for n, link in found if n == name] or [link for n, link in found if n.startswith(name + " ")]
+    code = _padel_country(country)
+    if len(candidates) > 1 and code:
+        # FIP shows three-letter codes; compare via the same alpha-2 mapping
+        candidates = [link for link in candidates
+                      if _padel_country(fip_player_details(session, link).get("country")) == code]
+    return candidates[0] if len(candidates) == 1 else ""
+
+
+def _fip_wl(text):
+    m = re.match(r'\s*(\d+)\s*-\s*(\d+)', text or '')
+    return [int(m.group(1)), int(m.group(2))] if m else None
+
+
+def _fip_title(text):
+    """'FIP BEYOND B2 LONDON' -> 'FIP Beyond B2 London'."""
+    return re.sub(r'\bFip\b', 'FIP', (text or '').title())
+
+
+def _fip_value(text):
+    """Placeholder dashes ("--", "-", "(--)") -> ""."""
+    text = _lta_text(text)
+    return "" if re.fullmatch(r'[\s()\-–]*', text) else text
+
+
+def fip_player_details(session, url):
+    """Scrape a padelfip.com player page into the dict stored as player_bios.fip_stats."""
+    page = session.get(url, timeout=30).text
+    # The page ships commented-out template blocks with dummy figures: drop them first
+    page = re.sub(r'<!--.*?-->', '', page, flags=re.S)
+    stats = {"name": "", "country": "", "ranking": "", "rank": "", "points": "", "ranking_date": "",
+             "season": {}, "career": {}, "partner": {}, "age": "", "dob": "", "birthplace": "",
+             "height": "", "position": "", "coaches": [], "tournaments": [],
+             "scraped": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+    item = page.split('class="player__item"', 1)[-1]
+    for field, pattern in (("rank", r'player__number">\s*(\d+)'),
+                           ("name", r'player__name">(.*?)</h2>'),
+                           ("country", r'player__country">([^<]*)<'),
+                           ("points", r'player__pointTNumber">\s*(\d+)')):
+        m = re.search(pattern, item, re.S)
+        stats[field] = _fip_value(m.group(1)) if m else ""
+    ranking = re.search(r'topplayer__title">([^<]+)<', page)
+    stats["ranking"] = re.sub(r'\bFip\b', 'FIP', _lta_text(ranking.group(1))) if ranking else ""
+    updated = re.search(r'player__update">.*?(\d{2}/\d{2}/\d{4})', page, re.S)
+    stats["ranking_date"] = updated.group(1) if updated else ""
+
+    # Season and career summary rows: Best Rank / W-l / Titles / Race or Cons. Win
+    for row_class, name in (("tab__year", "season"), ("tab__career", "career")):
+        m = re.search(rf'tab__row {row_class}">\s*<div class="tab__name">([^<]*)</div>(.*?)</div>\s*</div>\s*</div>',
+                      page, re.S)
+        if not m:
+            continue
+        row = {"year": _lta_text(m.group(1))} if name == "season" else {}
+        for title, value in re.findall(r'tab__title">([^<]+)</p>\s*<span class="tab__value">([^<]*)<',
+                                       m.group(2)):
+            key = {"best rank": "best_rank", "w-l": "wl", "titles": "titles", "race": "race",
+                   "cons. win": "cons_win"}.get(_lta_text(title).lower())
+            if key:
+                row[key] = _fip_wl(value) if key == "wl" else _fip_value(value)
+        stats[name] = row
+
+    partner = re.search(r'player__pairedName">.*?<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>'
+                        r'(?:.*?player__pairedCountry">([^<]*)<)?', page, re.S)
+    if partner:
+        stats["partner"] = {"name": _lta_text(partner.group(2)), "url": partner.group(1),
+                            "country": _lta_text(partner.group(3) or '')}
+
+    # Player details: one overview__mirror block per field
+    details = page.split('id="overview"', 1)[-1].split('<div class="overview__content', 1)[0]
+    for block in details.split('<div class="overview__mirror')[1:]:
+        title, _, body = block.split('overview__title">', 1)[-1].partition('</span>')
+        title = _lta_text(title).lower()
+        if title == "age":
+            m = re.match(r'\s*(\d*)\s*\(([^)]*)\)', _lta_text(body))
+            stats["age"], stats["dob"] = (m.group(1), _fip_value(m.group(2))) if m else ("", "")
+        elif title == "born in":
+            stats["birthplace"] = _fip_value(body)
+        elif title == "height":
+            height = _fip_value(body)
+            stats["height"] = "" if height.startswith("--") else height.replace(" CM", " m")
+        elif title == "playing position":
+            stats["position"] = _fip_value(body)
+        elif title == "coaches":
+            stats["coaches"] = [c for c in (_fip_value(x) for x in re.findall(r'<p[^>]*>(.*?)</p>', body, re.S)) if c]
+
+    # Counted tournaments, newest first
+    table = page.split('id="data-tournament-table"', 1)
+    if len(table) > 1:
+        body = table[1].split('</table>', 1)[0]
+        for cells in re.findall(r'<tr class="table__row[^>]*>(.*?)</tr>', body, re.S):
+            cols = [_lta_text(c) for c in re.findall(r'<td[^>]*>(.*?)</td>', cells, re.S)]
+            if len(cols) == 6:
+                stats["tournaments"].append({"location": cols[0], "tournament": cols[1], "category": cols[2],
+                                             "date": cols[3], "round": cols[4], "points": cols[5]})
+        stats["tournaments"].sort(key=lambda t: t["date"][6:] + t["date"][3:5] + t["date"][:2], reverse=True)
+    return stats
+
+
+def parse_fip_stats(bio):
+    """Structured padelfip.com data saved on a bio, or {}."""
+    try:
+        stats = json.loads((bio or {}).get('fip_stats') or '{}')
+        return stats if isinstance(stats, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def fip_talking_points(stats, name="", padel=None, split=False):
+    """
+    Commentator-ready sentences from padelfip.com data. With Padel API data
+    present (`padel`), lines it already covers (ranking, partner, age, side) are left out.
+    """
+    if not stats:
+        return ([], []) if split else []
+    padel = padel or {}
+    points, background = [], []
+    first = (name or stats.get("name") or "").split(" ")[0] or "They"
+    if stats.get("rank") and not padel.get("ranking"):
+        line = f"Ranked {stats['rank']} in the {stats.get('ranking') or 'FIP ranking'}"
+        if stats.get("points"):
+            line += f" with {stats['points']} points"
+        points.append(line + (f" (as of {stats['ranking_date']})." if stats.get("ranking_date") else "."))
+
+    season, career = stats.get("season") or {}, stats.get("career") or {}
+    if season.get("wl") and sum(season["wl"]):
+        line = f"{_wl(season['wl'])} on the FIP tour in {season.get('year') or 'this season'}"
+        if season.get("titles") and season["titles"] not in ("0", "-"):
+            line += f" with {season['titles']} title{'s' if season['titles'] != '1' else ''}"
+        points.append(line + ".")
+    if career.get("wl") and sum(career["wl"]) >= 5:
+        line = f"FIP career record {_wl(career['wl'])}"
+        if career.get("titles") and career["titles"] not in ("0", "-"):
+            line += f", {career['titles']} title{'s' if career['titles'] != '1' else ''}"
+        if career.get("best_rank"):
+            line += f", career-high ranking {career['best_rank']}"
+        points.append(line + ".")
+    elif career.get("best_rank") and not stats.get("rank") and not padel.get("ranking"):
+        points.append(f"Career-high FIP ranking of {career['best_rank']}.")
+
+    tournaments = stats.get("tournaments") or []
+    best = next((t for t in tournaments if t["round"] == "Winner"), None)
+    if best:
+        points.append(f"Most recent FIP win: {_fip_title(best['tournament'])} ({_fip_title(best['category'])}), {best['date']}.")
+    elif tournaments:
+        last = tournaments[0]
+        points.append(f"Latest FIP result: {last['round']} at {_fip_title(last['tournament'])}, {last['date']}.")
+
+    partner = stats.get("partner") or {}
+    if partner.get("name") and not (padel.get("partner") or {}).get("name"):
+        background.append(f"Regular FIP partner: {partner['name']}" +
+                          (f" ({partner['country']})." if partner.get("country") else "."))
+    if not padel:
+        who = []
+        if stats.get("age"):
+            who.append(f"{stats['age']} years old")
+        if stats.get("birthplace"):
+            who.append(f"born in {stats['birthplace']}")
+        if stats.get("height"):
+            who.append(f"{stats['height']} tall")
+        if who:
+            background.append(f"{first} is " + ", ".join(who) + ".")
+        if stats.get("position"):
+            background.append(f"Plays on the {stats['position'].lower()} side.")
+    if stats.get("coaches"):
+        background.append("Coached by " + " and ".join(stats["coaches"]) + ".")
+    return (points, background) if split else points + background
+
+
+def _fip_bio_update(bio, url, stats):
+    """Bio columns after adding padelfip.com data: only empty born / plays are filled."""
+    fields = {c: bio.get(c) or '' for c in manager.PLAYER_BIO_FIELDS}
+    born = ", ".join(x for x in (stats.get("dob"), stats.get("birthplace")) if x)
+    plays = f"{stats['position']} side" if stats.get("position") else ""
+    fields["born"] = fields["born"] or born
+    fields["plays"] = fields["plays"] or plays
+    fields["fip_url"], fields["fip_stats"] = url, json.dumps(stats, ensure_ascii=False)
+    return fields
+
+
+def run_fip_import(force=False):
+    """
+    Background job: match every known player to their padelfip.com profile.
+    Saved FIP links are refreshed directly; others are searched by name.
+    """
+    status = fip_import_status
+    try:
+        players = collect_known_players()
+        bios = manager.get_all_player_bios(include_aliases=False)
+        cutoff = (datetime.now() - timedelta(hours=PADEL_API_REFRESH_HOURS)).strftime("%Y-%m-%d %H:%M")
+        todo, fresh = [], 0
+        for key, info in players.items():
+            bio = bios.get(key) or {}
+            if not force and (parse_fip_stats(bio).get("scraped") or "") > cutoff:
+                fresh += 1
+            elif bio.get('fip_url') or padel_search_name(key, bio, info["name"]):
+                todo.append((key, info))
+        session = fip_session()
+        status.update(total=len(todo), message=f"Searching padelfip.com for {len(todo)} player(s)…")
+        done = [0]
+
+        def fetch(item):
+            key, info = item
+            bio = bios.get(key) or {}
+            try:
+                url = bio.get('fip_url') or fip_find_player(
+                    session, padel_search_name(key, bio, info["name"]), bio.get('country') or info["country"])
+                stats = fip_player_details(session, url) if url else None
+                return key, (url, stats) if stats and stats.get("name") else None
+            except Exception as e:
+                print(f"FIP import: failed for {key}: {e}")
+                return key, None
+            finally:
+                done[0] += 1
+                status.update(done=done[0], message=f"Checked {done[0]}/{len(todo)} players on padelfip.com…")
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(FIP_IMPORT_WORKERS) as pool:
+            results = list(pool.map(fetch, todo))
+        saved = 0
+        for key, found in results:
+            if found and manager.save_player_bio(key, _fip_bio_update(manager.get_player_bio(key) or {}, *found)):
+                saved += 1
+        status["message"] = (f"FIP import finished: {saved} player(s) updated from padelfip.com, "
+                             f"{len(todo) - saved} not found, {fresh} already up to date.")
+    except Exception as e:
+        status["error"] = f"FIP import failed: {e}"
+    finally:
+        status["running"] = False
+
+
+@app.route('/api/v1/fip_import', methods=['GET', 'POST'])
+def api_fip_import():
+    """POST: start matching every known player to padelfip.com ({force: 1} refetches all). GET: progress."""
+    if request.method == 'POST':
+        if manager is None:
+            return jsonify({"error": "Cache manager not initialized."}), 503
+        if fip_import_status["running"]:
+            return jsonify({"error": "A FIP import is already running.", **fip_import_status}), 409
+        force = (request.form.get('force') or (request.get_json(silent=True) or {}).get('force')) in ('1', 1, True)
+        fip_import_status.update(running=True, done=0, total=0, error="", message="Starting FIP import…")
+        Thread(target=run_fip_import, args=(force,), daemon=True).start()
+    return jsonify(fip_import_status)
 
 
 # ====================================================================
@@ -4161,6 +4762,11 @@ def api_player_detail(player_name):
 
     last_completed = next((r for r in results if r['result']), None)
     lta = parse_lta_stats(bio)
+    padel = parse_padel_stats(bio)
+    fip = parse_fip_stats(bio)
+    # Pro performance from both sources first, then who-they-are background
+    padel_perf, padel_bg = padel_talking_points(padel, display_name, split=True)
+    fip_perf, fip_bg = fip_talking_points(fip, display_name, padel, split=True)
 
     return jsonify({
         "status": "success",
@@ -4174,9 +4780,14 @@ def api_player_detail(player_name):
         "notes": bio.get('notes') or '',
         "lta_url": bio.get('lta_url') or '',
         "lta": lta,
+        "padel_id": bio.get('padel_id') or '',
+        "padel": padel,
+        "fip_url": bio.get('fip_url') or '',
+        "fip": fip,
         "event_stats": event_stats,
-        # This-event points first (most relevant live), then the LTA career points
-        "talking_points": event_talking_points(event_stats, display_name) + lta_talking_points(lta, display_name),
+        # This-event points first (most relevant live), then pro (Padel API, FIP website) and LTA career points
+        "talking_points": (event_talking_points(event_stats, display_name) + padel_perf + fip_perf + padel_bg + fip_bg
+                           + lta_talking_points(lta, display_name)),
         "tournament_wins": wins,
         "tournament_losses": losses,
         "tournament_record": f"{wins}-{losses}",
@@ -4269,6 +4880,13 @@ def players_page():
                     if manager.save_player_bio(key, fields):
                         saved += 1
                 message = f"Saved {saved} full name(s)." if saved else "No name changes to save."
+        elif form_name == 'padel_token':
+            if manager is None:
+                error = "Database not ready yet - try again shortly."
+            else:
+                token = (request.form.get('padel_api_token') or '').strip()
+                manager.save_setting('padel_api_token', token)
+                message = "Padel API token saved." if token else "Padel API token cleared."
         elif form_name == 'import_csv':
             upload = request.files.get('bios_file')
             if manager is None:
@@ -4289,13 +4907,43 @@ def players_page():
             elif manager is None:
                 error = "Database not ready yet - try again shortly."
             else:
+                existing = manager.get_player_bio(player_key) or {}
                 fields = {col: request.form.get(col, '') for col in manager.PLAYER_BIO_FIELDS}
-                # Scraped LTA stats aren't editable in the form; keep them
-                fields['lta_stats'] = (manager.get_player_bio(player_key) or {}).get('lta_stats') or ''
+                # Scraped LTA / Padel API stats aren't editable in the form; keep them
+                fields['lta_stats'] = existing.get('lta_stats') or ''
+                fields['padel_id'] = re.sub(r'\D', '', fields['padel_id'].rsplit('/players/', 1)[-1].split('/')[0])
+                fields['padel_stats'] = (existing.get('padel_stats') or '') if fields['padel_id'] else ''
                 if not fields.get('display_name'):
                     fields['display_name'] = request.form.get('player_key', '').strip()
+                fields['fip_url'] = fields['fip_url'].strip()
+                fields['fip_stats'] = (existing.get('fip_stats') or '') if fields['fip_url'] else ''
+                # A newly entered Padel API player ID / FIP link is fetched straight away
+                fetch_note = ""
+                if fields['padel_id'] and (fields['padel_id'] != existing.get('padel_id') or not fields['padel_stats']):
+                    if not padel_api_token():
+                        fetch_note = " Save a Padel API token to load their pro data."
+                    else:
+                        try:
+                            details = padel_fetch_by_id(PadelApiClient(padel_api_token()), fields['padel_id'])
+                            if details:
+                                fields.update(_padel_bio_update(fields, details))
+                                fetch_note = f" Loaded Padel API data for {details.get('name') or 'player'}."
+                            else:
+                                fetch_note = f" No Padel API player with ID {fields['padel_id']}."
+                        except Exception as e:
+                            fetch_note = f" Could not load Padel API data: {e}"
+                if fields['fip_url'] and (fields['fip_url'] != existing.get('fip_url') or not fields['fip_stats']):
+                    if not FIP_PLAYER_URL_RE.match(fields['fip_url']):
+                        fetch_note += " FIP link not recognised - expected https://www.padelfip.com/player/…"
+                    else:
+                        try:
+                            stats = fip_player_details(fip_session(), fields['fip_url'])
+                            fields.update(_fip_bio_update(fields, fields['fip_url'], stats))
+                            fetch_note += f" Loaded FIP profile for {stats.get('name') or 'player'}."
+                        except Exception as e:
+                            fetch_note += f" Could not load the FIP profile: {e}"
                 if manager.save_player_bio(player_key, fields):
-                    message = f"Saved bio for {fields.get('display_name') or player_key}."
+                    message = f"Saved bio for {fields.get('display_name') or player_key}." + fetch_note
                 else:
                     error = "Failed to save bio - check the server logs."
 

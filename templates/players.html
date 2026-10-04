@@ -226,6 +226,12 @@ textarea { min-height: 80px; resize: vertical; }
                 <label for="f-lta_url">LTA profile URL <span class="label-hint">(paste the exact profile so links skip the name search)</span></label>
                 <input type="text" name="lta_url" id="f-lta_url" placeholder="https://competitions.lta.org.uk/player-profile/…">
                 <div class="api-line" id="lta-search-line"></div>
+                <label for="f-padel_id">Padel API player ID <span class="label-hint">(pro ranking, record, partner; fetched when you save - normally filled by the import)</span></label>
+                <input type="text" name="padel_id" id="f-padel_id" placeholder="e.g. 1234">
+                <div class="api-line" id="padel-line"></div>
+                <label for="f-fip_url">FIP profile URL <span class="label-hint">(padelfip.com - fills gaps: season / career record, titles, coaches; fetched when you save)</span></label>
+                <input type="text" name="fip_url" id="f-fip_url" placeholder="https://www.padelfip.com/player/…">
+                <div class="api-line" id="fip-line"></div>
                 <button class="btn" type="submit">💾 Save Player</button>
             </form>
             <div class="api-line" id="api-line"></div>
@@ -259,6 +265,27 @@ textarea { min-height: 80px; resize: vertical; }
             <button class="btn" type="submit">🎾 Import from LTA</button>
         </form>
         <div class="api-line" id="lta-import-status"></div>
+        <form method="post" action="/players" class="import-row">
+            <input type="hidden" name="form_name" value="padel_token">
+            <input type="password" name="padel_api_token" id="padel-token" autocomplete="off" style="flex:1 1 320px"
+                   placeholder="Padel API token (padelapi.org) - leave blank and save to clear">
+            <button class="btn" type="submit">🔑 Save token</button>
+        </form>
+        <form class="import-row" id="padel-import-form">
+            <span class="hint" style="flex:1">Match every player in the feed to Padel API (FIP / Premier Padel pros: ranking,
+                Elo, titles, record, partner, age, height, side). Requests are paced to your plan's rate limit, so a
+                full run can take a few minutes; players fetched in the last day are skipped.</span>
+            <label class="inline-check"><input type="checkbox" name="force" value="1"> Refetch all</label>
+            <button class="btn" type="submit">🌍 Import from Padel API</button>
+        </form>
+        <div class="api-line" id="padel-import-status"></div>
+        <form class="import-row" id="fip-import-form">
+            <span class="hint" style="flex:1">Fill the gaps from the FIP website (padelfip.com): players Padel API doesn't
+                cover (e.g. FIP Beyond), season and career win-loss, titles, latest results and coaches. No token needed.</span>
+            <label class="inline-check"><input type="checkbox" name="force" value="1"> Refetch all</label>
+            <button class="btn" type="submit">🏆 Import from FIP website</button>
+        </form>
+        <div class="api-line" id="fip-import-status"></div>
     </div>
 
     <div class="card bulk-card">
@@ -321,10 +348,20 @@ function selectPlayer(key){
     document.getElementById('f-career').value = bio.career || '';
     document.getElementById('f-notes').value = bio.notes || '';
     document.getElementById('f-lta_url').value = bio.lta_url || '';
+    document.getElementById('f-padel_id').value = bio.padel_id || '';
+    document.getElementById('f-fip_url').value = bio.fip_url || '';
     const searchName = (bio.display_name || p.name || '').trim();
     document.getElementById('lta-search-line').innerHTML = searchName
         ? `Find the profile: <a href="https://competitions.lta.org.uk/find/player?q=${encodeURIComponent(searchName)}" target="_blank" rel="noopener">search "${esc(searchName)}" on LTA ↗</a>, then paste its URL above.`
         : '';
+    const padel = (() => { try { return JSON.parse(bio.padel_stats || '{}'); } catch (e) { return {}; } })();
+    document.getElementById('padel-line').innerHTML = padel.id
+        ? `Padel API: ${esc(padel.name)}${padel.ranking ? ` · ranked ${esc(padel.ranking)}` : ''} · updated ${esc(padel.scraped || '')}${padel.url ? ` · <a href="${esc(padel.url)}" target="_blank" rel="noopener">profile ↗</a>` : ''}`
+        : '';
+    const fip = (() => { try { return JSON.parse(bio.fip_stats || '{}'); } catch (e) { return {}; } })();
+    document.getElementById('fip-line').innerHTML = fip.name
+        ? `FIP: ${esc(fip.name)}${fip.rank ? ` · ${esc(fip.ranking)} #${esc(fip.rank)}` : ''} · updated ${esc(fip.scraped || '')}`
+        : (searchName ? `<a href="https://www.padelfip.com/?s=${encodeURIComponent(searchName)}" target="_blank" rel="noopener">Search "${esc(searchName)}" on padelfip.com ↗</a>, then paste the profile URL above.` : '');
     // Linked duplicate entries for this player
     document.getElementById('link-panel').hidden = false;
     document.getElementById('link-keep').value = p.key;
@@ -364,6 +401,51 @@ document.getElementById('lta-import-form').addEventListener('submit', async e =>
     if (resp.ok) pollLtaImport();
 });
 pollLtaImport();
+
+// Padel API import: same background job + polling pattern
+const padelStatusEl = document.getElementById('padel-import-status');
+function showPadelStatus(s){
+    padelStatusEl.textContent = s.error || s.message || (s.has_token === false ? 'No Padel API token saved yet.' : '');
+    padelStatusEl.style.color = s.error ? 'var(--error-color)' : '';
+    if (s.has_token) document.getElementById('padel-token').placeholder = 'Token saved - paste a new one to replace it';
+}
+async function pollPadelImport(){
+    const s = await (await fetch('/api/v1/padel_import')).json();
+    showPadelStatus(s);
+    if (s.running) setTimeout(pollPadelImport, 2000);
+    else if (s.message && s.message.startsWith('Padel API import finished')) {
+        padelStatusEl.innerHTML = `${esc(s.message)} <a href="/players">Reload to see bios ↻</a>`;
+    }
+}
+document.getElementById('padel-import-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const resp = await fetch('/api/v1/padel_import', { method: 'POST', body: new FormData(e.target) });
+    showPadelStatus(await resp.json());
+    if (resp.ok) pollPadelImport();
+});
+pollPadelImport();
+
+// FIP website import: same pattern
+const fipStatusEl = document.getElementById('fip-import-status');
+function showFipStatus(s){
+    fipStatusEl.textContent = s.error || s.message || '';
+    fipStatusEl.style.color = s.error ? 'var(--error-color)' : '';
+}
+async function pollFipImport(){
+    const s = await (await fetch('/api/v1/fip_import')).json();
+    showFipStatus(s);
+    if (s.running) setTimeout(pollFipImport, 1500);
+    else if (s.message && s.message.startsWith('FIP import finished')) {
+        fipStatusEl.innerHTML = `${esc(s.message)} <a href="/players">Reload to see bios ↻</a>`;
+    }
+}
+document.getElementById('fip-import-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const resp = await fetch('/api/v1/fip_import', { method: 'POST', body: new FormData(e.target) });
+    showFipStatus(await resp.json());
+    if (resp.ok) pollFipImport();
+});
+pollFipImport();
 </script>
 </body>
 </html>

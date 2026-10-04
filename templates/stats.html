@@ -1373,6 +1373,8 @@ function playerPanelHTML(p, who){
     if (d.plays) sub.push(esc(d.plays));
     if (d.tournament_wins + d.tournament_losses > 0) sub.push(`This event ${esc(d.tournament_record)}`);
     if (d.lta_url) sub.push(`<a href="${esc(d.lta_url)}" target="_blank" rel="noopener">LTA ↗</a>`);
+    if ((d.padel || {}).url) sub.push(`<a href="${esc(d.padel.url)}" target="_blank" rel="noopener">Pro profile ↗</a>`);
+    if (d.fip_url) sub.push(`<a href="${esc(d.fip_url)}" target="_blank" rel="noopener">FIP ↗</a>`);
 
     const titles = lta.titles || [];
     const nWon = titles.filter(t => t.result === 'Winner').length;
@@ -1389,6 +1391,15 @@ function playerPanelHTML(p, who){
         if (es.time_on_court_sec) eventChips.push(`<span class="chip">On court <strong>${fmtElapsed(es.time_on_court_sec)}</strong></span>`);
     }
     const chips = [];
+    const padel = d.padel || {};
+    if (padel.ranking) chips.push(`<span class="chip" title="Official pro ranking (Padel API)">Pro rank <strong>#${esc(padel.ranking)}</strong></span>`);
+    if (padel.elo) chips.push(`<span class="chip" title="Padel API Elo rating">Elo <strong>${esc(padel.elo)}</strong></span>`);
+    if ((padel.partner || {}).name) chips.push(`<span class="chip">Pro partner <strong>${esc(padel.partner.name)}</strong></span>`);
+    // FIP website fills what Padel API didn't give (e.g. FIP Beyond rankings, career record)
+    const fip = d.fip || {};
+    if (fip.rank && !padel.ranking) chips.push(`<span class="chip" title="${esc(fip.ranking || 'FIP ranking')}">FIP <strong>#${esc(fip.rank)}</strong></span>`);
+    if (((fip.career || {}).wl || []).length && fip.career.wl[0] + fip.career.wl[1]) chips.push(`<span class="chip">FIP W-L <strong>${fip.career.wl[0]}-${fip.career.wl[1]}</strong></span>`);
+    if ((fip.partner || {}).name && !(padel.partner || {}).name) chips.push(`<span class="chip">FIP partner <strong>${esc(fip.partner.name)}</strong></span>`);
     if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
     if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
 
@@ -1736,13 +1747,17 @@ function searchDetailHTML(){
         if (es.time_on_court_sec) chips.push(`<span class="chip">On court <strong>${fmtElapsed(es.time_on_court_sec)}</strong></span>`);
     }
     const lta = d.lta || {};
+    if ((d.padel || {}).ranking) chips.push(`<span class="chip">Pro rank <strong>#${esc(d.padel.ranking)}</strong></span>`);
+    else if ((d.fip || {}).rank) chips.push(`<span class="chip">FIP <strong>#${esc(d.fip.rank)}</strong></span>`);
     if ((lta.wtn || {}).doubles) chips.push(`<span class="chip">WTN D <strong>${esc(lta.wtn.doubles)}</strong></span>`);
     if ((lta.wtn || {}).singles) chips.push(`<span class="chip">WTN S <strong>${esc(lta.wtn.singles)}</strong></span>`);
     const points = (d.talking_points || []).slice(0, 8);
     return `<div class="card search-detail">
         <div class="ppanel-head"><span class="ppanel-name">${esc(d.name)}</span>
             ${d.country ? `<span class="ppanel-sub">${esc(d.country)}</span>` : ''}
-            ${d.lta_url ? `<a class="ppanel-sub" href="${esc(d.lta_url)}" target="_blank" rel="noopener" style="color:#8ab4ff">LTA ↗</a>` : ''}</div>
+            ${d.lta_url ? `<a class="ppanel-sub" href="${esc(d.lta_url)}" target="_blank" rel="noopener" style="color:#8ab4ff">LTA ↗</a>` : ''}
+            ${(d.padel || {}).url ? `<a class="ppanel-sub" href="${esc(d.padel.url)}" target="_blank" rel="noopener" style="color:#8ab4ff">Pro profile ↗</a>` : ''}
+            ${d.fip_url ? `<a class="ppanel-sub" href="${esc(d.fip_url)}" target="_blank" rel="noopener" style="color:#8ab4ff">FIP ↗</a>` : ''}</div>
         ${chips.length ? `<div class="ppanel-row" style="gap:6px;margin:8px 0">${chips.join('')}</div>` : ''}
         ${points.length ? `<ul class="talking">${points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     </div>`;
