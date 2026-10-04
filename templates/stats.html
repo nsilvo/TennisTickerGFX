@@ -328,19 +328,28 @@ body.screen-mode .players-view { flex: 1; min-height: 0; }
 .strip-card .player-name { font-size: 1.3rem; }
 .strip-card .set-cell { font-size: 1.1rem; min-width: 36px; }
 .strip-card .game-cell { font-size: 1.6rem; }
-.players-view .ppanel { padding: 16px 20px; gap: 10px; }
-.players-view .ppanel-name { font-size: 1.6rem; }
-.players-view .ppanel-sub { font-size: 1rem; }
-.players-view .chip { font-size: 0.85rem; padding: 3px 10px; }
-.players-view .chip strong { font-size: 1.05rem; }
-.players-view .wl-line { font-size: 0.95rem; }
-.players-view .wl-line .val { font-size: 0.95rem; }
-.players-view .wl-line .lbl, .players-view .mini-label { font-size: 0.78rem; }
-.players-view .wl-track { height: 10px; }
-.players-view .form-dot { width: 26px; height: 26px; font-size: 0.8rem; }
-.players-view .talking { font-size: 1.25rem; line-height: 1.5; padding-left: 22px; }
-.players-view .talking li { margin-bottom: 8px; }
-.players-view .staff-notes { font-size: 1.1rem; margin-top: 6px; }
+/* Sizes are em of the panel's font-size, so fitPlayerPanels() can scale a whole
+   card through --fit: sparse cards grow, dense ones shrink to keep everything on screen */
+.players-view .ppanel { font-size: calc(16px * var(--fit, 1)); padding: 1em 1.25em; gap: 0.625em; }
+.players-view .ppanel-name { font-size: 1.6em; }
+.players-view .ppanel-sub { font-size: 1em; }
+.players-view .ppanel-row { gap: 0.4em !important; }
+.players-view .chip { font-size: 0.85em; padding: 0.22em 0.7em; }
+.players-view .chip strong { font-size: 1.24em; }
+.players-view .wl-line { font-size: 0.95em; }
+.players-view .wl-line .val { font-size: 1em; }
+.players-view .wl-line .lbl, .players-view .mini-label { font-size: 0.78em; }
+.players-view .wl-track { height: 0.625em; }
+.players-view .form-dot { width: 1.625em; height: 1.625em; font-size: 0.8em; }
+.players-view .talking { font-size: 1.25em; line-height: 1.5; padding-left: 1.1em; }
+.players-view .talking li { margin-bottom: 0.4em; }
+.players-view .staff-notes { font-size: 1.1em; margin-top: 0.4em; }
+/* Cards share their column by content, not equally */
+body.screen-mode .players-view .ppanel { flex: 1 1 auto; grid-template-columns: fit-content(20.5em) minmax(0, 1fr); gap: 0.625em 1.5em; }
+body.screen-mode .players-view .ppanel-stats { gap: 0.5em; }
+/* While measuring, cards take their natural height with nothing scrolled away */
+.player-col.fit-measure .ppanel { flex: none !important; }
+.player-col.fit-measure .talking-wrap { overflow: visible !important; }
 body.screen-mode .talking-wrap {
     min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 10px;
     scrollbar-width: thin; scrollbar-color: rgba(255,193,7,0.55) rgba(255,255,255,0.06);
@@ -1212,6 +1221,29 @@ function setLayout(mode){
     render();
 }
 
+// Player info tab: per column, the largest text scale at which every card fits without scrolling.
+// Text-light cards are scaled up to FIT_MAX; long ones shrink to FIT_MIN, then scroll as a last resort.
+const FIT_MIN = 0.6, FIT_MAX = 1.35;
+function fitPlayerPanels(){
+    if (!document.body.classList.contains('screen-mode')) return;
+    document.querySelectorAll('.players-view .player-col').forEach(col => {
+        const panels = [...col.querySelectorAll('.ppanel')];
+        const room = col.clientHeight;
+        if (!panels.length || !room) return;
+        const gap = parseFloat(getComputedStyle(col).rowGap) || 0;
+        const fits = scale => {
+            panels.forEach(p => p.style.setProperty('--fit', scale));
+            return panels.reduce((h, p) => h + p.offsetHeight, 0) + gap * (panels.length - 1) <= room;
+        };
+        col.classList.add('fit-measure');
+        let lo = FIT_MIN, hi = FIT_MAX;
+        if (fits(hi)) lo = hi;
+        else for (let i = 0; i < 8; i++){ const mid = (lo + hi) / 2; if (fits(mid)) lo = mid; else hi = mid; }
+        col.classList.remove('fit-measure');
+        panels.forEach(p => p.style.setProperty('--fit', lo.toFixed(3)));
+    });
+}
+
 function fitStage(){
     const host = document.getElementById('cards');
     if (!document.body.classList.contains('screen-mode')){ host.style.transform = ''; return; }
@@ -1945,6 +1977,7 @@ function render(){
         const searchFocus = searchFocusState();
         cardsEl.className = 'dash-host';
         cardsEl.innerHTML = focusDashboardHTML(FOCUS_COURT, mode);
+        fitPlayerPanels();
         cardsEl.querySelectorAll('.talking-wrap[data-key]').forEach(el => {
             if (scrolls[el.dataset.key]) el.scrollTop = scrolls[el.dataset.key];
         });
