@@ -4747,6 +4747,10 @@ def api_player_detail(player_name):
         return jsonify({"error": "Player name required."}), 400
 
     player_key = manager.resolve_player_key(player_key)
+    known_players = collect_known_players()
+    if player_key not in known_players:
+        # Staged LTA matches carry full names ("Aimee Gibson") - find the "GIBSON A" style key
+        player_key = resolve_name_to_player_key(player_key, known_players) or player_key
     bio = manager.get_player_bio(player_key) or {}
     wins, losses, results = compute_player_record(player_key)
     event_stats = player_event_stats(player_key)
@@ -4756,7 +4760,7 @@ def api_player_detail(player_name):
 
     display_name = bio.get('display_name') or player_key.title()
     # Prefer the exact feed casing when we have seen the player in a match
-    known = collect_known_players().get(player_key)
+    known = known_players.get(player_key)
     if known and not bio.get('display_name'):
         display_name = _feed_full_name(known['name'])   # "BUSH, Tegan" -> "Tegan Bush"
 
