@@ -23,6 +23,10 @@ services:
       # Defaults for the TennisTicker feed; the /admin page overrides these
       - TT_USERID=${TT_USERID:-}
       - TT_CONTRACT=${TT_CONTRACT:-}
+      # Padel API (padelapi.org) for pro player bios; a token saved on /players overrides this
+      - PADEL_API_TOKEN=${PADEL_API_TOKEN:-}
+      # Requests per minute allowed by your Padel API plan (free 10, Plus/Pro 60, Business 500)
+      - PADEL_API_RATE_PER_MIN=${PADEL_API_RATE_PER_MIN:-10}
     depends_on:
       postgres:
         condition: service_healthy
